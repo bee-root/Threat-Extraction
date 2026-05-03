@@ -1,4 +1,4 @@
-# Threat-Extraction-Main
-Threat-Extraction-Main is a Security OSINT platform that integrates multiple open-source intelligence tools into a single, powerful environment designed to support cybersecurity analysts. By aggregating and correlating data from diverse OSINT sources, it enables faster, accurate, and more efficient investigations.
+# Threat-Extraction
+Threat-Extraction is a Security OSINT platform that integrates multiple open-source intelligence tools into a single, powerful environment designed to support cybersecurity analysts. By aggregating and correlating data from diverse OSINT sources, it enables faster, accurate, and more efficient investigations.
 The platform streamlines the process of threat analysis by automating data collection, enrichment, and structuring, allowing analysts to focus on decision-making rather than manual research. It provides clear, concise insights by filtering noise and highlighting relevant indicators.
-Threat-Extraction-Main is built to enhance situational awareness and reduce investigation time, making it ideal for incident response and threat hunting. Its modular architecture allows easy integration of additional OSINT tools and APIs, ensuring adaptability to evolving cybersecurity challenges.
+Threat-Extraction is built to enhance situational awareness and reduce investigation time, making it ideal for incident response and threat hunting. Its modular architecture allows easy integration of additional OSINT tools and APIs, ensuring adaptability to evolving cybersecurity challenges.
