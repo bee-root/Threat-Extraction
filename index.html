@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ro">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Threat Extraction Dashboard</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+
+  <body>
+    <div class="container">
+      <header>
+        <h1>Threat Extraction Dashboard</h1>
+        <p>
+          Încarcă fișiere text și extrage automat IP-uri, URL-uri, domenii și
+          hash-uri. Datele sunt ordonate descrescător după nivelul de
+          suspiciune.
+        </p>
+      </header>
+
+      <section class="upload-section">
+        <label class="file-label" for="fileInput">
+          Selectează fișiere text (.txt):
+        </label>
+
+        <input id="fileInput" type="file" accept=".txt" multiple />
+
+        <button id="clearBtn" class="btn" type="button">Reset</button>
+
+        <div id="fileList" class="file-list"></div>
+      </section>
+
+      <section class="auth-section">
+        <h2>Chei API pentru Dashboard</h2>
+
+        <div class="auth-row">
+          <div class="auth-control">
+            <label class="file-label" for="vtKey">VirusTotal API key</label>
+            <input id="vtKey" type="text" placeholder="Paste VirusTotal key" />
+          </div>
+
+          <div class="auth-control">
+            <label class="file-label" for="kasKey">Kaspersky API key</label>
+            <input id="kasKey" type="text" placeholder="Paste Kaspersky key" />
+          </div>
+
+          <div class="auth-control">
+            <label class="file-label" for="abuseKey">AbuseIPDB API key</label>
+            <input
+              id="abuseKey"
+              type="text"
+              placeholder="Paste AbuseIPDB key"
+            />
+          </div>
+
+          <div class="auth-control">
+            <label class="file-label" for="cfKey">Cloudflare token</label>
+            <input
+              id="cfKey"
+              type="text"
+              placeholder="Paste Cloudflare token"
+            />
+          </div>
+        </div>
+
+        <div class="manual-actions">
+          <button id="saveKeysBtn" class="btn" type="button">
+            Salvează cheile
+          </button>
+
+          <span id="authNote" class="manual-note">
+            Cheile sunt stocate local în browser.
+          </span>
+        </div>
+      </section>
+
+      <section class="manual-section">
+        <h2>Căutare manuală</h2>
+
+        <div class="manual-row">
+          <div class="manual-control">
+            <label class="file-label" for="manualType">Tip de input</label>
+
+            <select id="manualType">
+              <option value="all">Toate</option>
+              <option value="ip">IP-uri</option>
+              <option value="url">URL-uri</option>
+              <option value="domain">Domenii</option>
+              <option value="hash">Hash-uri</option>
+            </select>
+          </div>
+
+          <div class="manual-control manual-grow">
+            <label class="file-label" for="manualInput">
+              Introdu IP-uri, domenii, URL-uri sau hash-uri
+            </label>
+
+            <textarea
+              id="manualInput"
+              placeholder="Exemplu: 1.2.3.4, example.com, https://test.com, d41d8cd98f00b204e9800998ecf8427e"
+            ></textarea>
+          </div>
+        </div>
+
+        <div class="manual-actions">
+          <button id="manualSearchBtn" class="btn" type="button">
+            Procesare manuală
+          </button>
+
+          <span id="manualNote" class="manual-note">
+            Alege tipul și introdu datele pentru un rezultat direct.
+          </span>
+        </div>
+      </section>
+
+      <section class="analysis-section">
+        <h2>Analiză API</h2>
+
+        <div class="manual-actions">
+          <button id="startAnalysisBtn" class="btn" type="button" disabled>
+            Start Analysis
+          </button>
+
+          <button id="stopAnalysisBtn" class="btn" type="button" disabled>
+            Stop Analysis
+          </button>
+
+          <span id="analysisNote" class="manual-note">
+            Încarcă fișiere sau introdu date manuale pentru a activa analiza.
+          </span>
+        </div>
+      </section>
+
+      <section class="summary-section">
+        <div class="summary-card">
+          <span class="summary-value" id="countIps">0</span>
+          <span class="summary-label">IP-uri</span>
+        </div>
+
+        <div class="summary-card">
+          <span class="summary-value" id="countUrls">0</span>
+          <span class="summary-label">URL-uri</span>
+        </div>
+
+        <div class="summary-card">
+          <span class="summary-value" id="countDomains">0</span>
+          <span class="summary-label">Domenii</span>
+        </div>
+
+        <div class="summary-card">
+          <span class="summary-value" id="countHashes">0</span>
+          <span class="summary-label">Hash-uri</span>
+        </div>
+      </section>
+
+      <section class="results-section">
+        <div class="result-block">
+          <h2>Detalii IP</h2>
+          <div id="ipContainer" class="results-grid"></div>
+        </div>
+
+        <div class="result-block">
+          <h2>URL-uri</h2>
+          <div id="urlContainer" class="results-grid"></div>
+        </div>
+
+        <div class="result-block">
+          <h2>Domenii</h2>
+          <div id="domainContainer" class="results-grid"></div>
+        </div>
+
+        <div class="result-block">
+          <h2>File hash-uri</h2>
+          <div id="hashContainer" class="results-grid"></div>
+        </div>
+      </section>
+
+      <footer>
+        <p>
+          Dashboard static pentru extragere IOC. Analiza API folosește
+          Cloudflare Worker-ul configurat în app.js.
+        </p>
+      </footer>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
