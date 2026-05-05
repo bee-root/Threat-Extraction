@@ -418,6 +418,9 @@ const authNote = document.getElementById("authNote");
 const startAnalysisBtn = document.getElementById("startAnalysisBtn");
 const stopAnalysisBtn = document.getElementById("stopAnalysisBtn");
 const analysisNote = document.getElementById("analysisNote");
+const reportMaliciousBtn = document.getElementById("reportMaliciousBtn");
+const reportFullBtn = document.getElementById("reportFullBtn");
+const reportNote = document.getElementById("reportNote");
 
 // ── Analysis state ─────────────────────────────────────────────
 let analysisAborted = false;
@@ -451,7 +454,7 @@ function loadKeys() {
     LOG.keyLoaded("Cloudflare");
   }
   if (vt || kas || abuse || cf)
-    authNote.textContent = "Cheile au fost încărcate din browser.";
+    authNote.textContent = "Keys have been loaded from the browser.";
 }
 
 // ── Save keys ──────────────────────────────────────────────────
@@ -476,7 +479,7 @@ saveKeysBtn.addEventListener("click", () => {
     localStorage.setItem(LS.CF, cf);
     LOG.keySaved("Cloudflare");
   } else localStorage.removeItem(LS.CF);
-  authNote.textContent = "Cheile au fost salvate în browser.";
+  authNote.textContent = "Keys have been saved to the browser.";
   updateAnalysisBtnState();
 });
 
@@ -625,6 +628,18 @@ const ispMap = {
 };
 
 // ── OSINT sources ──────────────────────────────────────────────
+// Each category lists only providers that genuinely support that IOC type.
+// IP-only services (e.g. AbuseIPDB, Shodan, GreyNoise, ThreatSummary/guardpot)
+// don't appear under domain/url/hash. Hash-specific sandboxes
+// (MalwareBazaar, Hybrid Analysis, Triage, etc.) only appear under hash.
+const urlHost = (v) => {
+  try {
+    return new URL(v).hostname;
+  } catch {
+    return v;
+  }
+};
+
 const osintSources = {
   ip: [
     {
@@ -637,37 +652,51 @@ const osintSources = {
       url: (v) => `https://www.ipqualityscore.com/free-ip-lookup/${v}`,
     },
     {
-      label: "CrowdSec",
-      url: (v) => `https://app.crowdsec.net/analysis/ip/${v}`,
-    },
-    {
-      label: "Cloudflare Radar",
-      url: (v) => `https://radar.cloudflare.com/${v}`,
-    },
-    {
       label: "Talos",
       url: (v) =>
         `https://talosintelligence.com/reputation_center/lookup?search=${v}`,
     },
     {
+      label: "Cloudflare Radar",
+      url: (v) => `https://radar.cloudflare.com/ip/${v}`,
+    },
+    {
       label: "Kaspersky OpenTip",
       url: (v) => `https://opentip.kaspersky.com/${v}`,
+    },
+    { label: "Shodan", url: (v) => `https://www.shodan.io/host/${v}` },
+    { label: "GreyNoise", url: (v) => `https://viz.greynoise.io/ip/${v}` },
+    {
+      label: "AlienVault OTX",
+      url: (v) => `https://otx.alienvault.com/indicator/ip/${v}`,
+    },
+    {
+      label: "ThreatSummary",
+      url: (v) => `https://threatsummary.guardpot.com/search?query=${v}`,
     },
   ],
   url: [
     {
       label: "VirusTotal",
       url: (v) =>
-        `https://www.virustotal.com/gui/url/${encodeURIComponent(v)}/detection`,
+        `https://www.virustotal.com/gui/search/${encodeURIComponent(v)}`,
     },
     {
       label: "URLScan",
       url: (v) => `https://urlscan.io/search/#${encodeURIComponent(v)}`,
     },
     {
-      label: "Blue Coat",
+      label: "URLVoid",
+      url: (v) => `https://www.urlvoid.com/scan/${urlHost(v)}/`,
+    },
+    {
+      label: "Sucuri SiteCheck",
+      url: (v) => `https://sitecheck.sucuri.net/results/${encodeURIComponent(v)}`,
+    },
+    {
+      label: "Symantec SiteReview",
       url: (v) =>
-        `https://sitereview.bluecoat.com/sitereview.jsp#/?url=${encodeURIComponent(v)}`,
+        `https://sitereview.bluecoat.com/#/lookup-result/${encodeURIComponent(v)}`,
     },
     {
       label: "Talos",
@@ -679,14 +708,8 @@ const osintSources = {
       url: (v) => `https://opentip.kaspersky.com/${encodeURIComponent(v)}`,
     },
     {
-      label: "ThreatSummary",
-      url: (v) =>
-        `https://threatsummary.guardpot.com/search?query=${encodeURIComponent(v)}`,
-    },
-    {
-      label: "CrowdSec",
-      url: (v) =>
-        `https://app.crowdsec.net/analysis/url/${encodeURIComponent(v)}`,
+      label: "AlienVault OTX",
+      url: (v) => `https://otx.alienvault.com/indicator/url/${encodeURIComponent(v)}`,
     },
   ],
   domain: [
@@ -696,31 +719,39 @@ const osintSources = {
     },
     {
       label: "URLScan",
-      url: (v) => `https://urlscan.io/search/#${encodeURIComponent(v)}`,
+      url: (v) => `https://urlscan.io/domain/${v}`,
     },
     {
-      label: "Blue Coat",
+      label: "URLVoid",
+      url: (v) => `https://www.urlvoid.com/scan/${v}/`,
+    },
+    {
+      label: "Symantec SiteReview",
       url: (v) =>
-        `https://sitereview.bluecoat.com/sitereview.jsp#/?url=${encodeURIComponent(v)}`,
+        `https://sitereview.bluecoat.com/#/lookup-result/${encodeURIComponent(v)}`,
     },
     {
       label: "Talos",
       url: (v) =>
-        `https://talosintelligence.com/reputation_center/lookup?search=${encodeURIComponent(v)}`,
+        `https://talosintelligence.com/reputation_center/lookup?search=${v}`,
     },
     {
       label: "Cloudflare Radar",
-      url: (v) => `https://radar.cloudflare.com/${v}`,
+      url: (v) => `https://radar.cloudflare.com/domains/domain/${v}`,
     },
     {
       label: "Kaspersky OpenTip",
       url: (v) => `https://opentip.kaspersky.com/${encodeURIComponent(v)}`,
     },
     {
-      label: "ThreatSummary",
-      url: (v) =>
-        `https://threatsummary.guardpot.com/search?query=${encodeURIComponent(v)}`,
+      label: "SecurityTrails",
+      url: (v) => `https://securitytrails.com/domain/${v}/dns`,
     },
+    {
+      label: "AlienVault OTX",
+      url: (v) => `https://otx.alienvault.com/indicator/domain/${v}`,
+    },
+    { label: "WHOIS", url: (v) => `https://who.is/whois/${v}` },
   ],
   hash: [
     {
@@ -728,12 +759,29 @@ const osintSources = {
       url: (v) => `https://www.virustotal.com/gui/file/${v}/detection`,
     },
     {
+      label: "MalwareBazaar",
+      url: (v) => `https://bazaar.abuse.ch/sample/${v}/`,
+    },
+    {
+      label: "Hybrid Analysis",
+      url: (v) => `https://www.hybrid-analysis.com/search?query=${v}`,
+    },
+    { label: "Triage", url: (v) => `https://tria.ge/s?q=${v}` },
+    {
+      label: "Joe Sandbox",
+      url: (v) => `https://www.joesandbox.com/search?q=${v}`,
+    },
+    {
       label: "Kaspersky OpenTip",
       url: (v) => `https://opentip.kaspersky.com/${v}`,
     },
     {
-      label: "ThreatSummary",
-      url: (v) => `https://threatsummary.guardpot.com/search?query=${v}`,
+      label: "AlienVault OTX",
+      url: (v) => `https://otx.alienvault.com/indicator/file/${v}`,
+    },
+    {
+      label: "ThreatFox",
+      url: (v) => `https://threatfox.abuse.ch/browse.php?search=hash%3A${v}`,
     },
   ],
 };
@@ -744,6 +792,8 @@ manualSearchBtn.addEventListener("click", handleManualSearch);
 clearBtn.addEventListener("click", resetDashboard);
 startAnalysisBtn.addEventListener("click", startAnalysis);
 stopAnalysisBtn.addEventListener("click", stopAnalysis);
+reportMaliciousBtn.addEventListener("click", () => downloadReport("malicious"));
+reportFullBtn.addEventListener("click", () => downloadReport("full"));
 
 // ── File handling ──────────────────────────────────────────────
 function handleFiles() {
@@ -769,10 +819,10 @@ function handleManualSearch() {
   const raw = manualInput.value.trim();
   if (!raw) {
     manualNote.textContent =
-      "Introduce cel puțin o valoare pentru procesare manuală.";
+      "Enter at least one value for manual processing.";
     return;
   }
-  manualNote.textContent = `Procesare manuală pentru: ${manualType.value.toUpperCase()}`;
+  manualNote.textContent = `Manual processing for: ${manualType.value.toUpperCase()}`;
   processManualInput(raw, manualType.value);
 }
 
@@ -865,16 +915,16 @@ function renderAll(ips, urls, domains, hashes) {
   countHashes.textContent = hashD.length;
   ipContainer.innerHTML = ipD.length
     ? createIpTable(ipD)
-    : "<p>Nu s-au găsit IP-uri.</p>";
+    : "<p>No IPs found.</p>";
   urlContainer.innerHTML = urlD.length
     ? createUrlTable(urlD)
-    : "<p>Nu s-au găsit URL-uri.</p>";
+    : "<p>No URLs found.</p>";
   domainContainer.innerHTML = domD.length
     ? createDomainTable(domD)
-    : "<p>Nu s-au găsit domenii.</p>";
+    : "<p>No domains found.</p>";
   hashContainer.innerHTML = hashD.length
     ? createHashTable(hashD)
-    : "<p>Nu s-au găsit hash-uri.</p>";
+    : "<p>No hashes found.</p>";
   updateAnalysisBtnState();
 }
 
@@ -947,10 +997,10 @@ function getIpDetails(ip) {
     const score = Math.min(100, Math.max(mal * 8, abScore));
     const note =
       mal >= 5 || abScore >= 75
-        ? `⚠ Malitios: ${mal}/${total} VT vendors · ${abScore}% AbuseIPDB`
+        ? `⚠ Malicious: ${mal}/${total} VT vendors · ${abScore}% AbuseIPDB`
         : mal >= 1 || abScore >= 25
-          ? `⚡ Suspect: ${mal}/${total} VT vendors · ${abScore}% AbuseIPDB`
-          : `✓ Curat: ${mal}/${total} VT vendors · ${abScore}% AbuseIPDB`;
+          ? `⚡ Suspicious: ${mal}/${total} VT vendors · ${abScore}% AbuseIPDB`
+          : `✓ Clean: ${mal}/${total} VT vendors · ${abScore}% AbuseIPDB`;
     return {
       category: reserved ? "Reserved" : isPrivate ? "Private" : "Public",
       isp,
@@ -976,10 +1026,10 @@ function getIpDetails(ip) {
     abuseConfidence: "—",
     talosReputation: "—",
     note: reserved
-      ? "IP rezervat - nu prezintă risc direct"
+      ? "Reserved IP - poses no direct risk"
       : isPrivate
-        ? "IP privat/intern - nu accesibil public"
-        : "Nu a fost analizat încă",
+        ? "Private/internal IP - not publicly accessible"
+        : "Not yet analyzed",
     score: reserved ? 5 : isPrivate ? 10 : 25,
     isDetected: false,
   };
@@ -990,7 +1040,7 @@ function getDomainDetails(domain) {
     return {
       vtVendors: 0,
       talosReputation: "Good",
-      note: "Domeniu de încredere - reputație bună pe toate sursele OSINT",
+      note: "Trusted domain - good reputation across all OSINT sources",
       score: 5,
       isDetected: false,
     };
@@ -1011,8 +1061,8 @@ function getDomainDetails(domain) {
               : "Good",
       note:
         mal > 0
-          ? `${mal}/${total} VT vendors semnalează`
-          : "✓ Curat pe VirusTotal",
+          ? `${mal}/${total} VT vendors flagged`
+          : "✓ Clean on VirusTotal",
       score: Math.min(100, 30 + mal * 10),
       isDetected: mal > 0,
     };
@@ -1024,7 +1074,7 @@ function getDomainDetails(domain) {
   return {
     vtVendors: "—",
     talosReputation: "—",
-    note: "Nu a fost analizat încă",
+    note: "Not yet analyzed",
     score,
     isDetected: false,
   };
@@ -1046,10 +1096,10 @@ function getUrlDetails(rawUrl) {
     vtVendors: "—",
     talosReputation: "—",
     note: isTrusted
-      ? "Domeniu de încredere"
+      ? "Trusted domain"
       : score >= 60
-        ? "URL potențial malitios - verifică sursele OSINT"
-        : "No verdict - URL-ul nu a fost raportat pe sursele OSINT",
+        ? "Potentially malicious URL - check OSINT sources"
+        : "No verdict - URL not reported on OSINT sources",
     score,
     isDetected: !isTrusted && score >= 60,
   };
@@ -1058,10 +1108,10 @@ function getUrlDetails(rawUrl) {
 function getHashDetails(hash) {
   const types = { 32: "MD5", 40: "SHA1", 64: "SHA256", 128: "SHA512" };
   const notes = {
-    32: "MD5 hash - verifică reputația pe VirusTotal",
-    40: "SHA1 hash - deprecated dar încă folosit pe VT",
-    64: "SHA256 hash - standard actual pentru file integrity",
-    128: "SHA512 hash - hash puternic pentru fișiere mari",
+    32: "MD5 hash - check reputation on VirusTotal",
+    40: "SHA1 hash - deprecated but still used on VT",
+    64: "SHA256 hash - current standard for file integrity",
+    128: "SHA512 hash - strong hash for large files",
   };
   const cached = apiCache[hash];
   if (cached && cached.vt && cached.vt.data && cached.vt.data.attributes) {
@@ -1072,8 +1122,8 @@ function getHashDetails(hash) {
       type: types[hash.length] || "Unknown",
       note:
         mal > 0
-          ? `⚠ ${mal}/${total} VT vendors semnalează malware`
-          : "✓ Curat pe VirusTotal",
+          ? `⚠ ${mal}/${total} VT vendors flagged malware`
+          : "✓ Clean on VirusTotal",
       score: Math.min(100, mal * 10),
       isDetected: mal > 0,
     };
@@ -1082,7 +1132,7 @@ function getHashDetails(hash) {
     type: types[hash.length] || "Unknown",
     note:
       notes[hash.length] ||
-      "Format necunoscut - ar putea fi SSDEEP, CTH, etc. No verdict.",
+      "Unknown format - could be SSDEEP, CTH, etc. No verdict.",
     score: types[hash.length] ? 50 : 35,
     isDetected: false,
   };
@@ -1143,7 +1193,7 @@ async function vtFetch(path) {
   const res = await workerFetch(path, { "X-VT-Key": vt });
   if (res.status === 404) return null;
   if (res.status === 429)
-    throw new Error("VT rate limit — așteaptă și reîncearcă");
+    throw new Error("VT rate limit — wait and retry");
   if (res.status === 401) throw new Error("VT API key invalid");
   if (!res.ok) throw new Error(`VT HTTP ${res.status}`);
   return res.json();
@@ -1194,11 +1244,12 @@ function updateAnalysisBtnState() {
   stopAnalysisBtn.disabled = !analysisRunning;
   if (!hasKeys)
     analysisNote.textContent =
-      'Adaugă cheile API și apasă "Salvează cheile" pentru a activa analiza.';
+      'Add API keys and press "Save keys" to enable analysis.';
   else if (!hasIOCs)
-    analysisNote.textContent = "Încarcă fișiere pentru a activa analiza.";
+    analysisNote.textContent = "Upload files to enable analysis.";
   else
-    analysisNote.textContent = 'Apasă "Start Analysis" pentru a interoga APIs.';
+    analysisNote.textContent = 'Press "Start Analysis" to query APIs.';
+  updateReportBtnState();
 }
 
 // ── Start analysis ─────────────────────────────────────────────
@@ -1206,7 +1257,7 @@ async function startAnalysis() {
   if (analysisRunning) return;
   const { vt, abuse } = getKeys();
   if (!vt && !abuse) {
-    analysisNote.textContent = "Adaugă cel puțin o cheie API.";
+    analysisNote.textContent = "Add at least one API key.";
     return;
   }
   analysisAborted = false;
@@ -1227,7 +1278,7 @@ async function startAnalysis() {
   ];
 
   if (!iocs.length) {
-    analysisNote.textContent = "Toate IOC-urile sunt deja analizate.";
+    analysisNote.textContent = "All IOCs are already analyzed.";
     finishAnalysis();
     return;
   }
@@ -1307,7 +1358,7 @@ async function startAnalysis() {
         summary.errors++;
       }
       done++;
-      analysisNote.textContent = `Se analizează ${done} / ${iocs.length} IOC-uri…`;
+      analysisNote.textContent = `Analyzing ${done} / ${iocs.length} IOCs…`;
       renderAll(currentIps, currentUrls, currentDomains, currentHashes);
     });
   }
@@ -1318,7 +1369,7 @@ async function startAnalysis() {
 function stopAnalysis() {
   analysisAborted = true;
   apiQueue.length = 0;
-  analysisNote.textContent = "Analiză oprită de utilizator.";
+  analysisNote.textContent = "Analysis stopped by user.";
   finishAnalysis(false);
 }
 
@@ -1326,7 +1377,7 @@ function finishAnalysis(completed = true) {
   analysisRunning = false;
   startAnalysisBtn.disabled = false;
   stopAnalysisBtn.disabled = true;
-  if (completed) analysisNote.textContent = "✓ Analiză completă.";
+  if (completed) analysisNote.textContent = "✓ Analysis complete.";
 }
 
 // ── Card builders (UI identical to original) ───────────────────
@@ -1339,7 +1390,7 @@ function createIpTable(items) {
             <div><div class="result-label">IP Address</div><div class="result-value">${item.ip}</div></div>
             <div><div class="result-label">ISP</div><div class="result-value">${item.isp}</div></div>
             <div><div class="result-label">Category</div><div class="result-value">${item.category}</div></div>
-            <div><div class="result-label">VirusTotal Vendors</div><div class="result-value">${item.vtVendors}${item.vtVendors !== "—" ? " vendors semnalează" : ""}</div></div>
+            <div><div class="result-label">VirusTotal Vendors</div><div class="result-value">${item.vtVendors}${item.vtVendors !== "—" ? " vendors flagged" : ""}</div></div>
             <div><div class="result-label">AbuseIPDB Confidence</div><div class="result-value">${item.abuseConfidence}</div></div>
             <div><div class="result-label">Talos Reputation</div><div class="result-value">${item.talosReputation}</div></div>
             <div><div class="result-label">Analysis</div><div class="result-value">${item.note}</div></div>
@@ -1385,7 +1436,7 @@ function createDomainTable(items) {
     <div class="result-item ${item.isDetected ? "detected" : ""}">
         <div class="result-item-left">
             <div><div class="result-label">Domain</div><div class="result-value">${item.domain}</div></div>
-            <div><div class="result-label">VirusTotal Vendors</div><div class="result-value">${item.vtVendors}${item.vtVendors !== "—" ? " vendors semnalează" : ""}</div></div>
+            <div><div class="result-label">VirusTotal Vendors</div><div class="result-value">${item.vtVendors}${item.vtVendors !== "—" ? " vendors flagged" : ""}</div></div>
             <div><div class="result-label">Talos Reputation</div><div class="result-value">${item.talosReputation}</div></div>
             <div><div class="result-label">Analysis</div><div class="result-value">${item.note}</div></div>
             <div><div class="result-label">Score</div><div>${createTag(item.score, !!apiCache[item.domain])}</div></div>
@@ -1420,7 +1471,7 @@ function createHashTable(items) {
 }
 
 function createTag(score, analyzed = false) {
-  if (!analyzed) return `<span class="tag tag-pending">NEANALIZ</span>`;
+  if (!analyzed) return `<span class="tag tag-pending">UNANALYZED</span>`;
   const label = score >= 70 ? "High" : score >= 45 ? "Medium" : "Low";
   const cls =
     score >= 70
@@ -1450,6 +1501,210 @@ document.addEventListener("click", (e) => {
   );
 });
 
+// ── Reports ────────────────────────────────────────────────────
+function updateReportBtnState() {
+  const total =
+    currentIps.length +
+    currentUrls.length +
+    currentDomains.length +
+    currentHashes.length;
+  const hasIOCs = total > 0;
+  reportMaliciousBtn.disabled = !hasIOCs;
+  reportFullBtn.disabled = !hasIOCs;
+  if (!hasIOCs) {
+    reportNote.textContent = "Load IOCs to enable the report buttons.";
+  } else {
+    reportNote.textContent = `${total} IOC(s) ready for export.`;
+  }
+}
+
+function isMalicious(item) {
+  return item && (item.score >= 70 || item.isDetected === true);
+}
+
+function pad(s, n) {
+  s = String(s);
+  return s.length >= n ? s : s + " ".repeat(n - s.length);
+}
+
+function buildReport(type) {
+  const now = new Date();
+  const iso = now.toISOString();
+  const ips = currentIps
+    .map((ip) => ({ ip, ...getIpDetails(ip) }))
+    .sort((a, b) => b.score - a.score);
+  const urls = currentUrls
+    .map((url) => ({ url, ...getUrlDetails(url) }))
+    .sort((a, b) => b.score - a.score);
+  const domains = currentDomains
+    .map((domain) => ({ domain, ...getDomainDetails(domain) }))
+    .sort((a, b) => b.score - a.score);
+  const hashes = currentHashes
+    .map((hash) => ({ hash, ...getHashDetails(hash) }))
+    .sort((a, b) => b.score - a.score);
+
+  const filterFn = type === "malicious" ? isMalicious : () => true;
+  const ipsList = ips.filter(filterFn);
+  const urlsList = urls.filter(filterFn);
+  const domainsList = domains.filter(filterFn);
+  const hashesList = hashes.filter(filterFn);
+
+  const lines = [];
+  lines.push("=".repeat(70));
+  lines.push(
+    `  THREAT EXTRACTION REPORT — ${
+      type === "malicious" ? "MALICIOUS ONLY" : "FULL DETAILS"
+    }`,
+  );
+  lines.push(`  Generated: ${iso}`);
+  lines.push("=".repeat(70));
+  lines.push("");
+  lines.push(
+    `Summary: ${ipsList.length} IP(s) · ${urlsList.length} URL(s) · ${domainsList.length} domain(s) · ${hashesList.length} hash(es)`,
+  );
+  lines.push("");
+
+  if (
+    type === "malicious" &&
+    !ipsList.length &&
+    !urlsList.length &&
+    !domainsList.length &&
+    !hashesList.length
+  ) {
+    lines.push("No malicious items found.");
+    return lines.join("\n");
+  }
+
+  // ── IPs ──
+  if (ipsList.length) {
+    lines.push("─".repeat(70));
+    lines.push("  IP ADDRESSES");
+    lines.push("─".repeat(70));
+    if (type === "malicious") {
+      ipsList.forEach((it) => {
+        lines.push(
+          `${pad(it.ip, 18)}  score=${pad(it.score, 4)}  VT=${pad(it.vtVendors, 8)}  Abuse=${pad(it.abuseConfidence, 6)}  ${it.note}`,
+        );
+      });
+    } else {
+      ipsList.forEach((it) => {
+        lines.push("");
+        lines.push(`IP: ${it.ip}`);
+        lines.push(`  Category:           ${it.category}`);
+        lines.push(`  ISP:                ${it.isp}`);
+        lines.push(`  VirusTotal Vendors: ${it.vtVendors}`);
+        lines.push(`  AbuseIPDB:          ${it.abuseConfidence}`);
+        lines.push(`  Talos Reputation:   ${it.talosReputation}`);
+        lines.push(`  Score:              ${it.score}`);
+        lines.push(`  Detected:           ${it.isDetected ? "yes" : "no"}`);
+        lines.push(`  Note:               ${it.note}`);
+      });
+    }
+    lines.push("");
+  }
+
+  // ── URLs ──
+  if (urlsList.length) {
+    lines.push("─".repeat(70));
+    lines.push("  URLS");
+    lines.push("─".repeat(70));
+    if (type === "malicious") {
+      urlsList.forEach((it) => {
+        lines.push(`${it.url}  score=${it.score}  ${it.note}`);
+      });
+    } else {
+      urlsList.forEach((it) => {
+        lines.push("");
+        lines.push(`URL: ${it.url}`);
+        lines.push(`  Domain:             ${it.domain}`);
+        lines.push(`  Path:               ${it.path || "/"}`);
+        lines.push(`  Query:              ${it.query || "—"}`);
+        lines.push(`  VirusTotal Vendors: ${it.vtVendors}`);
+        lines.push(`  Talos Reputation:   ${it.talosReputation}`);
+        lines.push(`  Score:              ${it.score}`);
+        lines.push(`  Detected:           ${it.isDetected ? "yes" : "no"}`);
+        lines.push(`  Note:               ${it.note}`);
+      });
+    }
+    lines.push("");
+  }
+
+  // ── Domains ──
+  if (domainsList.length) {
+    lines.push("─".repeat(70));
+    lines.push("  DOMAINS");
+    lines.push("─".repeat(70));
+    if (type === "malicious") {
+      domainsList.forEach((it) => {
+        lines.push(
+          `${pad(it.domain, 32)}  score=${pad(it.score, 4)}  VT=${pad(it.vtVendors, 6)}  ${it.note}`,
+        );
+      });
+    } else {
+      domainsList.forEach((it) => {
+        lines.push("");
+        lines.push(`Domain: ${it.domain}`);
+        lines.push(`  VirusTotal Vendors: ${it.vtVendors}`);
+        lines.push(`  Talos Reputation:   ${it.talosReputation}`);
+        lines.push(`  Score:              ${it.score}`);
+        lines.push(`  Detected:           ${it.isDetected ? "yes" : "no"}`);
+        lines.push(`  Note:               ${it.note}`);
+      });
+    }
+    lines.push("");
+  }
+
+  // ── Hashes ──
+  if (hashesList.length) {
+    lines.push("─".repeat(70));
+    lines.push("  FILE HASHES");
+    lines.push("─".repeat(70));
+    if (type === "malicious") {
+      hashesList.forEach((it) => {
+        lines.push(
+          `${pad(it.type, 8)}  ${it.hash}  score=${it.score}  ${it.note}`,
+        );
+      });
+    } else {
+      hashesList.forEach((it) => {
+        lines.push("");
+        lines.push(`Hash: ${it.hash}`);
+        lines.push(`  Type:               ${it.type}`);
+        lines.push(`  Score:              ${it.score}`);
+        lines.push(`  Detected:           ${it.isDetected ? "yes" : "no"}`);
+        lines.push(`  Note:               ${it.note}`);
+      });
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+function downloadReport(type) {
+  const total =
+    currentIps.length +
+    currentUrls.length +
+    currentDomains.length +
+    currentHashes.length;
+  if (!total) {
+    reportNote.textContent = "No IOCs to export.";
+    return;
+  }
+  const text = buildReport(type);
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  a.href = blobUrl;
+  a.download = `threat-report-${type}-${stamp}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  reportNote.textContent = `✓ Downloaded ${type} report.`;
+}
+
 // ── Reset ──────────────────────────────────────────────────────
 function resetDashboard() {
   if (analysisRunning) {
@@ -1468,7 +1723,7 @@ function resetDashboard() {
     urlContainer.innerHTML =
     domainContainer.innerHTML =
     hashContainer.innerHTML =
-      "<p>Nu s-au încărcat fișiere.</p>";
+      "<p>No files loaded.</p>";
   currentIps = [];
   currentUrls = [];
   currentDomains = [];

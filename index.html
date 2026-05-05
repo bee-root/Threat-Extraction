@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ro">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -12,15 +12,14 @@
       <header>
         <h1>Threat Extraction Dashboard</h1>
         <p>
-          Încarcă fișiere text și extrage automat IP-uri, URL-uri, domenii și
-          hash-uri. Datele sunt ordonate descrescător după nivelul de
-          suspiciune.
+          Upload text files and automatically extract IPs, URLs, domains, and
+          hashes. Data is sorted in descending order by suspicion level.
         </p>
       </header>
 
       <section class="upload-section">
         <label class="file-label" for="fileInput">
-          Selectează fișiere text (.txt):
+          Select text files (.txt):
         </label>
 
         <input id="fileInput" type="file" accept=".txt" multiple />
@@ -31,7 +30,7 @@
       </section>
 
       <section class="auth-section">
-        <h2>Chei API pentru Dashboard</h2>
+        <h2>API Keys for Dashboard</h2>
 
         <div class="auth-row">
           <div class="auth-control">
@@ -65,56 +64,56 @@
 
         <div class="manual-actions">
           <button id="saveKeysBtn" class="btn" type="button">
-            Salvează cheile
+            Save keys
           </button>
 
           <span id="authNote" class="manual-note">
-            Cheile sunt stocate local în browser.
+            Keys are stored locally in the browser.
           </span>
         </div>
       </section>
 
       <section class="manual-section">
-        <h2>Căutare manuală</h2>
+        <h2>Manual search</h2>
 
         <div class="manual-row">
           <div class="manual-control">
-            <label class="file-label" for="manualType">Tip de input</label>
+            <label class="file-label" for="manualType">Input type</label>
 
             <select id="manualType">
-              <option value="all">Toate</option>
-              <option value="ip">IP-uri</option>
-              <option value="url">URL-uri</option>
-              <option value="domain">Domenii</option>
-              <option value="hash">Hash-uri</option>
+              <option value="all">All</option>
+              <option value="ip">IPs</option>
+              <option value="url">URLs</option>
+              <option value="domain">Domains</option>
+              <option value="hash">Hashes</option>
             </select>
           </div>
 
           <div class="manual-control manual-grow">
             <label class="file-label" for="manualInput">
-              Introdu IP-uri, domenii, URL-uri sau hash-uri
+              Enter IPs, domains, URLs, or hashes
             </label>
 
             <textarea
               id="manualInput"
-              placeholder="Exemplu: 1.2.3.4, example.com, https://test.com, d41d8cd98f00b204e9800998ecf8427e"
+              placeholder="Example: 1.2.3.4, example.com, https://test.com, d41d8cd98f00b204e9800998ecf8427e"
             ></textarea>
           </div>
         </div>
 
         <div class="manual-actions">
           <button id="manualSearchBtn" class="btn" type="button">
-            Procesare manuală
+            Manual processing
           </button>
 
           <span id="manualNote" class="manual-note">
-            Alege tipul și introdu datele pentru un rezultat direct.
+            Choose the type and enter data for a direct result.
           </span>
         </div>
       </section>
 
       <section class="analysis-section">
-        <h2>Analiză API</h2>
+        <h2>API Analysis</h2>
 
         <div class="manual-actions">
           <button id="startAnalysisBtn" class="btn" type="button" disabled>
@@ -126,7 +125,25 @@
           </button>
 
           <span id="analysisNote" class="manual-note">
-            Încarcă fișiere sau introdu date manuale pentru a activa analiza.
+            Upload files or enter manual data to enable analysis.
+          </span>
+        </div>
+      </section>
+
+      <section class="report-section">
+        <h2>Report</h2>
+
+        <div class="manual-actions">
+          <button id="reportMaliciousBtn" class="btn" type="button" disabled>
+            Download malicious only (.txt)
+          </button>
+
+          <button id="reportFullBtn" class="btn" type="button" disabled>
+            Download full details (.txt)
+          </button>
+
+          <span id="reportNote" class="manual-note">
+            Load IOCs to enable the report buttons.
           </span>
         </div>
       </section>
@@ -134,51 +151,51 @@
       <section class="summary-section">
         <div class="summary-card">
           <span class="summary-value" id="countIps">0</span>
-          <span class="summary-label">IP-uri</span>
+          <span class="summary-label">IPs</span>
         </div>
 
         <div class="summary-card">
           <span class="summary-value" id="countUrls">0</span>
-          <span class="summary-label">URL-uri</span>
+          <span class="summary-label">URLs</span>
         </div>
 
         <div class="summary-card">
           <span class="summary-value" id="countDomains">0</span>
-          <span class="summary-label">Domenii</span>
+          <span class="summary-label">Domains</span>
         </div>
 
         <div class="summary-card">
           <span class="summary-value" id="countHashes">0</span>
-          <span class="summary-label">Hash-uri</span>
+          <span class="summary-label">Hashes</span>
         </div>
       </section>
 
       <section class="results-section">
         <div class="result-block">
-          <h2>Detalii IP</h2>
+          <h2>IP Details</h2>
           <div id="ipContainer" class="results-grid"></div>
         </div>
 
         <div class="result-block">
-          <h2>URL-uri</h2>
+          <h2>URLs</h2>
           <div id="urlContainer" class="results-grid"></div>
         </div>
 
         <div class="result-block">
-          <h2>Domenii</h2>
+          <h2>Domains</h2>
           <div id="domainContainer" class="results-grid"></div>
         </div>
 
         <div class="result-block">
-          <h2>File hash-uri</h2>
+          <h2>File Hashes</h2>
           <div id="hashContainer" class="results-grid"></div>
         </div>
       </section>
 
       <footer>
         <p>
-          Dashboard static pentru extragere IOC. Analiza API folosește
-          Cloudflare Worker-ul configurat în app.js.
+          Static dashboard for IOC extraction. API analysis uses the Cloudflare
+          Worker configured in app.js.
         </p>
       </footer>
     </div>

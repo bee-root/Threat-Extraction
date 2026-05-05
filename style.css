@@ -40,7 +40,10 @@ header p {
 .upload-section,
 .manual-section,
 .summary-section,
-.results-section {
+.results-section,
+.report-section,
+.analysis-section,
+.auth-section {
   margin-bottom: 24px;
 }
 
