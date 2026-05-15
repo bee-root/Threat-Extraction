@@ -449,6 +449,7 @@ const manualSearchBtn = document.getElementById("manualSearchBtn");
 const manualNote = document.getElementById("manualNote");
 const vtKeyInput = document.getElementById("vtKey");
 const abuseKeyInput = document.getElementById("abuseKey");
+const kasKeyInput = document.getElementById("kasKey");
 const saveKeysBtn = document.getElementById("saveKeysBtn");
 const authNote = document.getElementById("authNote");
 const keysFileInput = document.getElementById("keysFileInput");
@@ -483,16 +484,20 @@ function loadKeys() {
     abuseKeyInput.value = abuse;
     LOG.keyLoaded("AbuseIPDB");
   }
-  if (kas) LOG.keyLoaded("Kaspersky");
+  if (kas && kasKeyInput) {
+    kasKeyInput.value = kas;
+    LOG.keyLoaded("Kaspersky");
+  }
   if (cf) LOG.keyLoaded("Cloudflare");
-  if (vt || abuse)
+  if (vt || abuse || kas)
     authNote.textContent = "Keys have been loaded from the browser.";
 
   // Debug: show whether keys were read (masked) so we can trace issues.
   try {
     const mask = (s) => (s ? `${s.slice(0,4)}…${s.slice(-4)}` : "(none)");
     if (typeof keysFileNote !== 'undefined' && keysFileNote) {
-      keysFileNote.textContent = `VT:${mask(vt)} ABUSE:${mask(abuse)}`;
+      const kasStored = localStorage.getItem(LS.KAS) || "";
+      keysFileNote.textContent = `VT:${mask(vt)} ABUSE:${mask(abuse)} KAS:${mask(kasStored)}`;
     }
     console.log('loadKeys debug:', { vtStored: !!vt, abuseStored: !!abuse, vtRaw: vt ? vt.slice(0,6) + '...' : null });
   } catch (e) {
@@ -516,6 +521,7 @@ function setupKeysEventListener() {
   saveKeysBtn.addEventListener('click', () => {
     const vt = vtKeyInput.value.trim();
     const abuse = abuseKeyInput.value.trim();
+    const kas = kasKeyInput ? kasKeyInput.value.trim() : "";
     if (vt) {
       localStorage.setItem(LS.VT, vt);
       LOG.keySaved('VirusTotal');
@@ -524,7 +530,17 @@ function setupKeysEventListener() {
       localStorage.setItem(LS.ABUSE, abuse);
       LOG.keySaved('AbuseIPDB');
     } else localStorage.removeItem(LS.ABUSE);
+    if (kas) {
+      localStorage.setItem(LS.KAS, kas);
+      LOG.keySaved('Kaspersky');
+    } else localStorage.removeItem(LS.KAS);
     authNote.textContent = 'Keys have been saved to the browser.';
+    try {
+      const mask = (s) => (s ? `${s.slice(0,4)}…${s.slice(-4)}` : "(none)");
+      if (typeof keysFileNote !== 'undefined' && keysFileNote) {
+        keysFileNote.textContent = `VT:${mask(vt)} ABUSE:${mask(abuse)} KAS:${mask(kas)}`;
+      }
+    } catch (e) {}
     updateAnalysisBtnState();
   });
 }
@@ -533,6 +549,10 @@ function getKeys() {
   return {
     vt: vtKeyInput.value.trim() || localStorage.getItem(LS.VT) || "",
     abuse: abuseKeyInput.value.trim() || localStorage.getItem(LS.ABUSE) || "",
+    kas:
+      (kasKeyInput && kasKeyInput.value.trim()) ||
+      localStorage.getItem(LS.KAS) ||
+      "",
   };
 }
 
@@ -544,10 +564,11 @@ function getKeys() {
 const KEY_ALIASES = {
   vt: ["vt", "virustotal", "vt_key", "vtkey"],
   abuse: ["abuse", "abuseipdb", "abuse_key", "abusekey"],
+  kas: ["kas", "kaspersky", "kas_key", "kaskey", "opentip"],
 };
 
 function parseKeysFile(text) {
-  const found = { vt: null, abuse: null };
+  const found = { vt: null, abuse: null, kas: null };
   const lines = text.split(/\r?\n/);
   for (const rawLine of lines) {
     // Strip inline comments (# or //) and trim.
@@ -589,13 +610,19 @@ if (keysFileInput) {
         LOG.keySaved("AbuseIPDB");
         filled.push("AbuseIPDB");
       }
+      if (parsed.kas) {
+        if (kasKeyInput) kasKeyInput.value = parsed.kas;
+        localStorage.setItem(LS.KAS, parsed.kas);
+        LOG.keySaved("Kaspersky");
+        filled.push("Kaspersky");
+      }
 
       if (filled.length) {
         keysFileNote.textContent = `✓ Loaded ${filled.length} key(s): ${filled.join(", ")}.`;
         authNote.textContent = "Keys loaded from file and saved.";
       } else {
         keysFileNote.textContent =
-          "No recognized keys found. Expected lines like 'VT=...' or 'ABUSE=...'.";
+          "No recognized keys found. Expected lines like 'VT=...', 'ABUSE=...' or 'KAS=...'.";
       }
       updateAnalysisBtnState();
     } catch (e) {
@@ -609,7 +636,7 @@ if (keysFileInput) {
 // ── Helpers ────────────────────────────────────────────────────
 // Trusted-domain / suspicious-TLD / hardcoded-ISP lists were removed.
 // Verdicts now come from the real API responses (VirusTotal, AbuseIPDB,
-// Talos) so the dashboard reflects live OSINT data instead of static maps.
+// GreyNoise, Shodan InternetDB, URLhaus).
 function formatVtDate(unix) {
   if (!unix) return null;
   const d = new Date(unix * 1000);
@@ -827,13 +854,15 @@ function init() {
   try {
     const vt = localStorage.getItem(LS.VT) || "";
     const abuse = localStorage.getItem(LS.ABUSE) || "";
+    const kas = localStorage.getItem(LS.KAS) || "";
     if (vt && vtKeyInput) vtKeyInput.value = vt;
     if (abuse && abuseKeyInput) abuseKeyInput.value = abuse;
-    if (vt || abuse) authNote.textContent = 'Keys have been loaded from the browser.';
+    if (kas && kasKeyInput) kasKeyInput.value = kas;
+    if (vt || abuse || kas) authNote.textContent = 'Keys have been loaded from the browser.';
     // Update visible debug note
     if (typeof keysFileNote !== 'undefined' && keysFileNote) {
       const mask = (s) => (s ? `${s.slice(0,4)}…${s.slice(-4)}` : "(none)");
-      keysFileNote.textContent = `VT:${mask(vt)} ABUSE:${mask(abuse)}`;
+      keysFileNote.textContent = `VT:${mask(vt)} ABUSE:${mask(abuse)} KAS:${mask(kas)}`;
     }
   } catch (e) {
     console.warn('init key population failed', e.message);
@@ -984,6 +1013,40 @@ function renderAll(ips, urls, domains, hashes) {
     ? createHashTable(hashD)
     : "<p>No hashes found.</p>";
   updateAnalysisBtnState();
+  // If there are file hashes and a VirusTotal key, auto-fetch VT details
+  // for any hashes not yet present in apiCache. This improves UX so the
+  // file entries populate with details without an explicit "Start Analysis"
+  // click. Only run when not already performing a full analysis.
+  try {
+    autoFetchHashesIfNeeded();
+  } catch (e) {
+    console.warn('autoFetchHashesIfNeeded failed', e.message);
+  }
+}
+
+async function autoFetchHashesIfNeeded() {
+  if (analysisRunning) return;
+  const { vt } = getKeys();
+  if (!vt) return;
+  const missing = currentHashes.filter((h) => !apiCache[h]);
+  if (!missing.length) return;
+  // Don't block render; fetch in background and update entries as they arrive.
+  for (const h of missing) {
+    (async (hash) => {
+      try {
+        const vtData = await vtFetch(`/vt/hash/${hash}`);
+        apiCache[hash] = { vt: vtData };
+        LOG.hash(hash, vtData);
+      } catch (e) {
+        apiCache[hash] = { err: e.message };
+        LOG.error(hash, 'hash', e.message);
+      }
+      // Re-render to show updated details for this hash only.
+      try {
+        renderAll(currentIps, currentUrls, currentDomains, currentHashes);
+      } catch (e) {}
+    })(h);
+  }
 }
 
 // ── Extractors ─────────────────────────────────────────────────
@@ -1071,15 +1134,16 @@ function getIpDetails(ip) {
         : mal >= 1 || abScore >= 25
           ? "⚡ SUSPICIOUS"
           : "✓ CLEAN";
-    // Human-readable prose summary for analysts (based on verdict and reputation)
+    // Human-readable prose summary for analysts (verdict + real OSINT reputation)
     const classification = verdict.startsWith("⚠")
       ? "malicious"
       : verdict.startsWith("⚡")
         ? "suspicious"
         : "clean";
-    const reputationWord = abScore >= 75 ? "poor" : abScore >= 25 ? "questionable" : "neutral/clean";
-    const abusePhrase = reportCount ? ` and recent abuse/phishing/malware-related reports (${reportCount})` : "";
-    const prose = `This IP address is classified as ${classification} based on multiple OSINT sources, with a ${reputationWord} network reputation${abusePhrase}.`;
+    const abusePhrase = reportCount
+      ? `, according to recent abuse/phishing/malware-related reports (${reportCount})`
+      : "";
+    const prose = `This IP address is classified as ${classification} based on multiple OSINT sources${abusePhrase}.`;
 
     // Normalize attack evidence into concise categories (no raw log/comment dumps).
     const attackTypes = new Set();
@@ -1142,12 +1206,39 @@ function getIpDetails(ip) {
       attacksNote = "Abuse reported (attack type not specified)";
     }
 
+    // GreyNoise Community classification (benign / malicious / unknown
+    // + actor name like "Shodan" / "Censys" if recognised).
+    const gn = cached.greynoise || null;
+    const gnClass = gn
+      ? gn.classification
+        ? gn.classification.charAt(0).toUpperCase() + gn.classification.slice(1)
+        : gn.noise
+          ? "Noise"
+          : null
+      : null;
+    const gnActor = (gn && gn.name && gn.name !== "unknown") ? gn.name : null;
+
+    // Shodan InternetDB (no-key) — tags + open ports + vulns/CVEs.
+    const sh = cached.shodan || null;
+    const shTags = sh && Array.isArray(sh.tags) && sh.tags.length
+      ? sh.tags.slice(0, 8).join(", ")
+      : null;
+    const shPorts =
+      sh && Array.isArray(sh.ports) && sh.ports.length
+        ? sh.ports.slice(0, 12).join(", ")
+        : null;
+    const shCves =
+      sh && Array.isArray(sh.vulns) && sh.vulns.length
+        ? `${sh.vulns.length} CVE${sh.vulns.length === 1 ? "" : "s"}: ${sh.vulns.slice(0, 4).join(", ")}${sh.vulns.length > 4 ? "…" : ""}`
+        : null;
+
     const note = prose + "\n\n" + buildAnalysisBlock(verdict, [
       {
         title: "DETECTION METRICS",
         rows: [
           ["VirusTotal", `${mal}/${total}`],
           ["AbuseIPDB", `${abScore}%`],
+          ["GreyNoise", gnClass ? (gnActor ? `${gnClass} — ${gnActor}` : gnClass) : null],
         ],
       },
       {
@@ -1158,6 +1249,14 @@ function getIpDetails(ip) {
           ["ASN", asn || "—"],
           ["Usage Type", usageType || "—"],
           ["Resolved Domain", resolvedDomain || "—"],
+        ],
+      },
+      {
+        title: "SHODAN",
+        rows: [
+          ["Open Ports", shPorts],
+          ["Tags", shTags],
+          ["Vulnerabilities", shCves],
         ],
       },
       {
@@ -1244,24 +1343,117 @@ function getDomainDetails(domain) {
     const reputation =
       typeof a.reputation === "number" ? String(a.reputation) : null;
 
+    // Content category — Kaspersky OpenTip primary (single canonical
+    // label like "Search engines and portals"); fall back to the most
+    // common label across VirusTotal's vendor-keyed map. Labels are
+    // normalised (Title Case, dashes → spaces) before voting so
+    // "search-engines" and "Search engines" don't compete.
+    const normaliseCategory = (raw) =>
+      String(raw)
+        .replace(/[-_/]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase()
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+
+    let contentCategory = null;
+    let contentCategorySource = null;
+
+    // 1) Kaspersky OpenTip — DomainGeneralInfo.Categories (or
+    //    CategoriesWithZone[].Name) is a single clean label.
+    const kas = cached.kas || null;
+    if (kas) {
+      const dgi = kas.DomainGeneralInfo || null;
+      let kasLabel = null;
+      if (dgi) {
+        if (
+          Array.isArray(dgi.CategoriesWithZone) &&
+          dgi.CategoriesWithZone.length &&
+          dgi.CategoriesWithZone[0].Name
+        ) {
+          kasLabel = String(dgi.CategoriesWithZone[0].Name).trim();
+        } else if (Array.isArray(dgi.Categories) && dgi.Categories.length) {
+          kasLabel = String(dgi.Categories[0]).trim();
+        }
+      }
+      if (kasLabel) {
+        contentCategory = normaliseCategory(kasLabel);
+        contentCategorySource = "Kaspersky";
+      }
+    }
+
+    // 2) VirusTotal fallback — vote among vendor-keyed categories.
+    if (!contentCategory && a.categories && typeof a.categories === "object") {
+      const counts = {};
+      for (const v of Object.values(a.categories)) {
+        if (!v) continue;
+        const label = normaliseCategory(v);
+        if (!label) continue;
+        counts[label] = (counts[label] || 0) + 1;
+      }
+      const sorted = Object.entries(counts).sort((x, y) => y[1] - x[1]);
+      if (sorted.length === 1) contentCategory = sorted[0][0];
+      else if (sorted.length > 1) {
+        contentCategory =
+          sorted[0][1] > sorted[1][1]
+            ? sorted[0][0]
+            : `${sorted[0][0]} / ${sorted[1][0]}`;
+      }
+      if (contentCategory) contentCategorySource = "VirusTotal";
+    }
+
+    // Debug: log raw category sources so we can tell which one
+    // contributed (or didn't) for any given domain.
+    try {
+      console.log(
+        `%c[Categories] %c${domain}`,
+        "color:#f0c040;font-weight:bold;font-family:monospace",
+        "color:#d4e2f0;font-family:monospace",
+        {
+          kaspersky: kas && kas.DomainGeneralInfo
+            ? {
+                Categories: kas.DomainGeneralInfo.Categories,
+                CategoriesWithZone: kas.DomainGeneralInfo.CategoriesWithZone,
+              }
+            : "(no Kaspersky data)",
+          virustotal: a.categories || "(no VT categories field)",
+        },
+      );
+    } catch {
+      /* ignore */
+    }
+
+    // Description (homepage meta / Wikipedia / fallback).
+    const desc = cached.describe || null;
+    const descTruncated = desc && desc.description
+      ? (desc.description.length > 350
+          ? desc.description.slice(0, 347).trimEnd() + "…"
+          : desc.description)
+      : null;
+    const descriptionValue = descTruncated
+      ? `${descTruncated}${desc.source ? `\n                      — source: ${desc.source}` : ""}`
+      : "No description found for this domain";
+    // Also expose a short/plain description and source separately so the
+    // UI can display a single-line summary (useful for quick search-style
+    // outputs like the Google example the user requested).
+    const descriptionShort = descTruncated || null;
+    const descriptionSource = desc && desc.source ? String(desc.source) : null;
+
     const verdict =
       mal >= 5 ? "⚠ MALICIOUS" : mal >= 1 ? "⚡ SUSPICIOUS" : "✓ CLEAN";
     const classification = mal >= 5 ? "malicious" : mal >= 1 ? "suspicious" : "clean";
-    const reputationWord =
-      reputation && Number(reputation) >= 50
-        ? "low"
-        : reputation && Number(reputation) > 0
-        ? "medium"
-        : "neutral/clean";
-    const prose = `This domain is classified as ${classification} based on multiple OSINT sources, with a ${reputationWord} web reputation and ${mal} vendor(s) flagging it.`;
+    const prose = `This domain is classified as ${classification} based on multiple OSINT sources, with ${mal} vendor(s) flagging it.`;
 
     // Place structured analysis block above the prose summary (consistent with IP entries)
     const note = buildAnalysisBlock(verdict, [
       {
+        title: "DESCRIPTION",
+        rows: [["Summary", descriptionValue]],
+      },
+      {
         title: "DETECTION METRICS",
         rows: [
           ["VirusTotal", `${mal}/${total} vendors flagged this domain`],
-          ["VT Reputation", reputation],
         ],
       },
       {
@@ -1275,7 +1467,16 @@ function getDomainDetails(domain) {
       },
       {
         title: "CATEGORIZATION",
-        rows: [["Categories", categories]],
+        rows: [
+          [
+            "Content Category",
+            contentCategory
+              ? contentCategorySource
+                ? `${contentCategory} (${contentCategorySource})`
+                : contentCategory
+              : null,
+          ],
+        ],
       },
     ]) + "\n\n" + prose;
 
@@ -1287,6 +1488,12 @@ function getDomainDetails(domain) {
       note,
       score: Math.min(100, 30 + mal * 10),
       isDetected: mal > 0,
+      // Expose the chosen content category and where it came from
+      contentCategory: contentCategory || null,
+      contentCategorySource: contentCategorySource || null,
+      // Provide a short one-line description and optional source
+      descriptionShort,
+      descriptionSource,
     };
   }
 
@@ -1294,11 +1501,12 @@ function getDomainDetails(domain) {
     "— NOT YET ANALYZED",
     [
       {
+        title: "DESCRIPTION",
+        rows: [["Summary", null]],
+      },
+      {
         title: "DETECTION METRICS",
-        rows: [
-          ["VirusTotal", null],
-          ["VT Reputation", null],
-        ],
+        rows: [["VirusTotal", null]],
       },
       {
         title: "REGISTRATION",
@@ -1311,7 +1519,7 @@ function getDomainDetails(domain) {
       },
       {
         title: "CATEGORIZATION",
-        rows: [["Categories", null]],
+        rows: [["Content Category", null]],
       },
     ],
   ) + "\n\nNo information found for this domain.";
@@ -1324,6 +1532,10 @@ function getDomainDetails(domain) {
     note: baseNote,
     score: 30,
     isDetected: false,
+    contentCategory: null,
+    contentCategorySource: null,
+    descriptionShort: null,
+    descriptionSource: null,
   };
 }
 
@@ -1342,14 +1554,42 @@ function getUrlDetails(rawUrl) {
     const verdict =
       mal >= 5 ? "⚠ MALICIOUS" : mal >= 1 ? "⚡ SUSPICIOUS" : "✓ CLEAN";
     const classification = verdict.startsWith("⚠") ? "malicious" : verdict.startsWith("⚡") ? "suspicious" : "clean";
-    const reputationWord = mal >= 5 ? "low" : mal >= 1 ? "questionable" : "neutral/clean";
-    const prose = `This URL is classified as ${classification} based on multiple OSINT sources, with a ${reputationWord} web reputation${mal ? ", possibly associated with phishing, scams, malware distribution, or abusive activity" : ""}.`;
+    const repRes = resolveReputation(cached);
+    const reputationWord =
+      repRes.value === "—" ? "neutral/clean" : repRes.value.toLowerCase();
+    const reputationSource = repRes.source ? ` according to ${repRes.source}` : "";
+    const prose = `This URL is classified as ${classification} based on multiple OSINT sources, with a ${reputationWord} web reputation${reputationSource}${mal ? ", possibly associated with phishing, scams, malware distribution, or abusive activity" : ""}.`;
+
+    // URLhaus (abuse.ch) threat intel for known-bad URLs.
+    const uh = cached.urlhaus || null;
+    const uhThreat = uh && uh.threat ? String(uh.threat) : null;
+    const uhStatus = uh && uh.url_status ? String(uh.url_status) : null;
+    const uhTags =
+      uh && Array.isArray(uh.tags) && uh.tags.length
+        ? uh.tags.slice(0, 6).join(", ")
+        : null;
 
     // Structured block above prose for consistency
     const note = buildAnalysisBlock(verdict, [
       {
         title: "DETECTION METRICS",
-        rows: [["VirusTotal", `${mal}/${total} vendors flagged this URL`]],
+        rows: [
+          ["VirusTotal", `${mal}/${total} vendors flagged this URL`],
+          [
+            "Web Reputation",
+            repRes.value === "—"
+              ? null
+              : `${repRes.value} (${repRes.source})`,
+          ],
+        ],
+      },
+      {
+        title: "THREAT INTEL",
+        rows: [
+          ["URLhaus Status", uhStatus],
+          ["Threat Type", uhThreat],
+          ["Tags", uhTags],
+        ],
       },
       {
         title: "URL STRUCTURE",
@@ -1438,6 +1678,13 @@ function getHashDetails(hash) {
       note,
       score: Math.min(100, mal * 10),
       isDetected: mal > 0,
+      // Expose common file fields for UI
+      fileName: a.meaningful_name || null,
+      fileType: a.type_description || null,
+      fileSize: a.size ? `${(a.size / 1024).toFixed(1)} KB` : null,
+      firstSeen: formatVtDate(a.first_submission_date) || null,
+      lastSeen: formatVtDate(a.last_submission_date) || null,
+      vtVendors: `${mal}/${total}`,
     };
   }
 
@@ -1467,6 +1714,12 @@ function getHashDetails(hash) {
     note: baseNote,
     score: hashType === "Unknown" ? 35 : 50,
     isDetected: false,
+    fileName: null,
+    fileType: null,
+    fileSize: null,
+    firstSeen: null,
+    lastSeen: null,
+    vtVendors: "—",
   };
 }
 
@@ -1524,6 +1777,105 @@ async function abuseFetch(ip) {
   if (res.status === 401) throw new Error("AbuseIPDB key invalid");
   if (!res.ok) throw new Error(`AbuseIPDB HTTP ${res.status}`);
   return res.json();
+}
+
+// ── GreyNoise Community + Shodan InternetDB (free, no key) ─────
+// Both are no-auth public APIs that return useful enrichment for
+// any public IPv4. GreyNoise classifies whether an IP is "noise" on
+// the internet (benign scanner / known actor / unknown); Shodan
+// InternetDB returns the IP's tags + open ports + CPEs.
+async function greynoiseFetch(ip) {
+  try {
+    const res = await workerFetch(`/greynoise/${ip}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || typeof data !== "object") return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+async function shodanFetch(ip) {
+  try {
+    const res = await workerFetch(`/shodan/${ip}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || typeof data !== "object") return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+// ── Domain description (homepage meta + Wikipedia fallback) ────
+// Returns { title, description, source } or null.
+// ── Kaspersky OpenTip (free tier, key required) ────────────────
+// Returns the raw OpenTip response or null. type: ip|domain|url|hash.
+async function kasFetch(type, value) {
+  const { kas } = getKeys();
+  if (!kas) return null;
+  try {
+    const res = await workerFetch(`/kas/${type}/${encodeURIComponent(value)}`, {
+      "X-Kas-Key": kas,
+    });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function describeFetch(domain) {
+  try {
+    const res = await workerFetch(`/describe/${encodeURIComponent(domain)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || (!data.description && !data.title)) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+// ── URLhaus (abuse.ch, free, no key) ───────────────────────────
+// Returns threat type + status + tags for known-bad URLs.
+async function urlhausFetch(url) {
+  try {
+    const body = new URLSearchParams({ url }).toString();
+    const res = await fetch(`${WORKER}/uh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || data.query_status !== "ok") return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+// Convert VT's signed reputation integer (-100..+100) to a stable label.
+function mapVtReputation(score) {
+  if (typeof score !== "number") return null;
+  if (score >= 20) return "Good";
+  if (score <= -20) return "Bad";
+  if (score < 0) return "Poor";
+  return "Neutral";
+}
+
+// Reputation now comes only from VirusTotal's community reputation field.
+function resolveReputation(cached) {
+  if (!cached) return { value: "—", source: null };
+  const vtAttr =
+    cached.vt && cached.vt.data && cached.vt.data.attributes
+      ? cached.vt.data.attributes
+      : null;
+  const fromVt = mapVtReputation(vtAttr && vtAttr.reputation);
+  if (fromVt) return { value: fromVt, source: "VirusTotal" };
+  return { value: "—", source: null };
 }
 
 
@@ -1584,15 +1936,10 @@ async function startAnalysis() {
   stopAnalysisBtn.disabled = false;
 
   const iocs = [
-    ...currentIps
-      .filter((v) => !apiCache[v])
-      .map((v) => ({ value: v, type: "ip" })),
-    ...currentDomains
-      .filter((v) => !apiCache[v])
-      .map((v) => ({ value: v, type: "domain" })),
-    ...currentHashes
-      .filter((v) => !apiCache[v])
-      .map((v) => ({ value: v, type: "hash" })),
+    ...currentIps.map((v) => ({ value: v, type: "ip" })),
+    ...currentDomains.map((v) => ({ value: v, type: "domain" })),
+    ...currentUrls.map((v) => ({ value: v, type: "url" })),
+    ...currentHashes.map((v) => ({ value: v, type: "hash" })),
   ];
 
   if (!iocs.length) {
@@ -1617,14 +1964,23 @@ async function startAnalysis() {
       if (analysisAborted) return;
       try {
         if (ioc.type === "ip") {
-          const [vtRes, abuseRes] = await Promise.allSettled([
+          const [vtRes, abuseRes, gnRes, shoRes] = await Promise.allSettled([
             vtFetch(`/vt/ip/${ioc.value}`),
             abuseFetch(ioc.value),
+            greynoiseFetch(ioc.value),
+            shodanFetch(ioc.value),
           ]);
           const vtData = vtRes.status === "fulfilled" ? vtRes.value : null;
           const abuseData =
             abuseRes.status === "fulfilled" ? abuseRes.value : null;
-          apiCache[ioc.value] = { vt: vtData, abuse: abuseData };
+          const gnData = gnRes.status === "fulfilled" ? gnRes.value : null;
+          const shoData = shoRes.status === "fulfilled" ? shoRes.value : null;
+          apiCache[ioc.value] = {
+            vt: vtData,
+            abuse: abuseData,
+            greynoise: gnData,
+            shodan: shoData,
+          };
           LOG.ip(ioc.value, vtData, abuseData);
           const mal =
             (vtData &&
@@ -1642,9 +1998,41 @@ async function startAnalysis() {
           else if (mal >= 1 || sc >= 25) summary.suspicious++;
           else summary.clean++;
         } else if (ioc.type === "domain") {
-          const vtData = await vtFetch(`/vt/domain/${ioc.value}`);
-          apiCache[ioc.value] = { vt: vtData };
+          const [vtRes, descRes, kasRes] = await Promise.allSettled([
+            vtFetch(`/vt/domain/${ioc.value}`),
+            describeFetch(ioc.value),
+            kasFetch("domain", ioc.value),
+          ]);
+          const vtData = vtRes.status === "fulfilled" ? vtRes.value : null;
+          const descData =
+            descRes.status === "fulfilled" ? descRes.value : null;
+          const kasData = kasRes.status === "fulfilled" ? kasRes.value : null;
+          apiCache[ioc.value] = {
+            vt: vtData,
+            describe: descData,
+            kas: kasData,
+          };
           LOG.domain(ioc.value, vtData);
+          const mal =
+            (vtData &&
+              vtData.data &&
+              vtData.data.attributes &&
+              vtData.data.attributes.last_analysis_stats &&
+              vtData.data.attributes.last_analysis_stats.malicious) ||
+            0;
+          if (mal >= 5) summary.malicious++;
+          else if (mal >= 1) summary.suspicious++;
+          else summary.clean++;
+        } else if (ioc.type === "url") {
+          // VT URL covers the URL itself; URLhaus (abuse.ch) adds
+          // threat-type / tags / status for known-bad URLs.
+          const [vtRes, uhRes] = await Promise.allSettled([
+            vtFetch(`/vt/url/${encodeURIComponent(ioc.value)}`),
+            urlhausFetch(ioc.value),
+          ]);
+          const vtData = vtRes.status === "fulfilled" ? vtRes.value : null;
+          const uhData = uhRes.status === "fulfilled" ? uhRes.value : null;
+          apiCache[ioc.value] = { vt: vtData, urlhaus: uhData };
           const mal =
             (vtData &&
               vtData.data &&
@@ -1712,6 +2100,7 @@ function createIpTable(items) {
             <div><div class="result-label">VirusTotal Vendors</div><div class="result-value">${item.vtVendors}${item.vtVendors !== "—" ? " vendors flagged" : ""}</div></div>
             <div><div class="result-label">AbuseIPDB Confidence</div><div class="result-value">${item.abuseConfidence}</div></div>
             <div><div class="result-label">Analysis</div><div class="analysis-block">${item.note}</div></div>
+            ${apiCache[item.ip] && apiCache[item.ip].err ? `<div><div class="result-label">Fetch Error</div><div class="result-value">${apiCache[item.ip].err}</div></div>` : ""}
             <div><div class="result-label">Score</div><div>${createTag(item.score, !!apiCache[item.ip])}</div></div>
         </div>
         <div class="result-item-right">
@@ -1735,6 +2124,7 @@ function createUrlTable(items) {
             <div><div class="result-label">Query</div><div class="result-value">${item.query || "—"}</div></div>
             <div><div class="result-label">VirusTotal Vendors</div><div class="result-value">${item.vtVendors}${item.vtVendors !== "—" ? " vendors flagged" : ""}</div></div>
             <div><div class="result-label">Analysis</div><div class="analysis-block">${item.note}</div></div>
+            ${apiCache[item.url] && apiCache[item.url].err ? `<div><div class="result-label">Fetch Error</div><div class="result-value">${apiCache[item.url].err}</div></div>` : ""}
             <div><div class="result-label">Score</div><div>${createTag(item.score, !!apiCache[item.url])}</div></div>
         </div>
         <div class="result-item-right">
@@ -1753,10 +2143,13 @@ function createDomainTable(items) {
     <div class="result-item ${item.isDetected ? "detected" : ""}">
         <div class="result-item-left">
             <div><div class="result-label">Domain</div><div class="result-value">${item.domain}</div></div>
+            ${item.contentCategory ? `<div><div class="result-label">Category</div><div class="result-value">${item.contentCategory}${item.contentCategorySource ? ` (${item.contentCategorySource})` : ``}</div></div>` : ""}
+            ${item.descriptionShort ? `<div><div class="result-label">Summary</div><div class="result-value">${item.descriptionShort}</div></div>` : ""}
             <div><div class="result-label">VirusTotal Vendors</div><div class="result-value">${item.vtVendors}${item.vtVendors !== "—" ? " vendors flagged" : ""}</div></div>
             <div><div class="result-label">Creation Date</div><div class="result-value">${item.creationDate || "—"}</div></div>
             <div><div class="result-label">Country</div><div class="result-value">${item.country || "—"}</div></div>
             <div><div class="result-label">Analysis</div><div class="analysis-block">${item.note}</div></div>
+            ${apiCache[item.domain] && apiCache[item.domain].err ? `<div><div class="result-label">Fetch Error</div><div class="result-value">${apiCache[item.domain].err}</div></div>` : ""}
             <div><div class="result-label">Score</div><div>${createTag(item.score, !!apiCache[item.domain])}</div></div>
         </div>
         <div class="result-item-right">
@@ -1775,7 +2168,13 @@ function createHashTable(items) {
     <div class="result-item ${item.isDetected ? "detected" : ""}">
         <div class="result-item-left">
             <div><div class="result-label">Hash</div><div class="result-value">${item.hash}</div></div>
-            <div><div class="result-label">Type</div><div class="result-value">${item.type}</div></div>
+            ${item.fileName ? `<div><div class="result-label">File Name</div><div class="result-value">${item.fileName}</div></div>` : ""}
+            <div><div class="result-label">Type</div><div class="result-value">${item.type}${item.fileType ? ` — ${item.fileType}` : ""}</div></div>
+            ${item.fileSize ? `<div><div class="result-label">Size</div><div class="result-value">${item.fileSize}</div></div>` : ""}
+            ${item.firstSeen ? `<div><div class="result-label">First Seen</div><div class="result-value">${item.firstSeen}</div></div>` : ""}
+            ${item.lastSeen ? `<div><div class="result-label">Last Seen</div><div class="result-value">${item.lastSeen}</div></div>` : ""}
+            <div><div class="result-label">VirusTotal Vendors</div><div class="result-value">${item.vtVendors || "—"}${item.vtVendors && item.vtVendors !== "—" ? " vendors flagged" : ""}</div></div>
+            ${apiCache[item.hash] && apiCache[item.hash].err ? `<div><div class="result-label">Fetch Error</div><div class="result-value">${apiCache[item.hash].err}</div></div>` : ""}
             <div><div class="result-label">Analysis</div><div class="analysis-block">${item.note}</div></div>
             <div><div class="result-label">Score</div><div>${createTag(item.score, !!apiCache[item.hash])}</div></div>
         </div>

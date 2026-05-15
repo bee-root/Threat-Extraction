@@ -22,7 +22,6 @@ const ALLOWED_HEADERS = [
   "X-Ha-Key",
   "X-St-Key",
   "X-Tri-Key",
-  "X-Cf-Key",
 ].join(", ");
 
 const CORS = {
@@ -96,6 +95,7 @@ export default {
 
       // ─── Kaspersky OpenTip ───────────────────────────────────
       // /kas/<ip|domain|url|hash>/<value>
+      // Free tier requires a personal key from opentip.kaspersky.com.
       m = path.match(/^\/kas\/(ip|domain|url|hash)\/(.+)$/);
       if (m) {
         const [, type, value] = m;
@@ -270,18 +270,110 @@ export default {
         );
       }
 
-      // ─── Cloudflare Radar ────────────────────────────────────
-      // /cf/ip/<ip>     /cf/domain/<domain>
-      m = path.match(/^\/cf\/(ip|domain)\/(.+)$/);
+      // ─── Domain description (homepage meta + Wikipedia fallback) ──
+      // /describe/<domain> — tries to fetch the domain's homepage and
+      // parse <title> + <meta name="description"> + og:description.
+      // Falls back to Wikipedia's REST summary for the base name when
+      // the homepage doesn't respond or has no description.
+      m = path.match(/^\/describe\/(.+)$/);
       if (m) {
-        const [, type, value] = m;
-        const key = h("X-Cf-Key");
-        if (!key) return json({ error: "Missing X-Cf-Key" }, 400);
-        const u =
-          type === "ip"
-            ? `https://api.cloudflare.com/client/v4/radar/entities/asns/ip?ip=${encodeURIComponent(value)}`
-            : `https://api.cloudflare.com/client/v4/radar/ranking/domain/${encodeURIComponent(value)}`;
-        return proxy(u, { headers: { Authorization: `Bearer ${key}` } });
+        const rawDomain = m[1];
+        // Basic shape check — refuse anything that doesn't look like
+        // a public domain (no IPs, no schemes, no slashes).
+        if (
+          !/^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i.test(
+            rawDomain,
+          )
+        ) {
+          return json({ error: "Invalid domain" }, 400);
+        }
+        const domain = rawDomain.toLowerCase();
+
+        let title = null;
+        let description = null;
+        let source = null;
+
+        const ua =
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+          "(KHTML, like Gecko) Chrome/120.0 Safari/537.36";
+
+        // 1) Try the homepage directly.
+        try {
+          const res = await fetch(`https://${domain}/`, {
+            method: "GET",
+            redirect: "follow",
+            headers: {
+              "User-Agent": ua,
+              Accept:
+                "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              "Accept-Language": "en-US,en;q=0.9",
+            },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (res.ok) {
+            // Cap response to ~200KB so we don't pull megabytes for a description.
+            const html = (await res.text()).slice(0, 200000);
+            const titleM = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+            if (titleM) title = decodeHtmlEntities(titleM[1].trim());
+
+            const metaPatterns = [
+              /<meta[^>]+name=["']description["'][^>]*content=["']([^"']+)["']/i,
+              /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i,
+              /<meta[^>]+property=["']og:description["'][^>]*content=["']([^"']+)["']/i,
+              /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:description["']/i,
+              /<meta[^>]+name=["']twitter:description["'][^>]*content=["']([^"']+)["']/i,
+            ];
+            for (const re of metaPatterns) {
+              const mm = html.match(re);
+              if (mm && mm[1]) {
+                description = decodeHtmlEntities(mm[1].trim());
+                break;
+              }
+            }
+            if (description) source = "Homepage meta";
+          }
+        } catch {
+          /* ignore — fall through to Wikipedia */
+        }
+
+        // 2) Wikipedia REST summary fallback.
+        if (!description) {
+          try {
+            // Use the second-level label (amazon.com → "amazon",
+            // bbc.co.uk → "bbc") which Wikipedia's article titles
+            // usually match for well-known brands.
+            const parts = domain.split(".");
+            const base = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
+            const wikiRes = await fetch(
+              `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(base)}`,
+              {
+                headers: {
+                  "User-Agent": ua,
+                  Accept: "application/json",
+                },
+                signal: AbortSignal.timeout(6000),
+              },
+            );
+            if (wikiRes.ok) {
+              const wiki = await wikiRes.json();
+              if (
+                wiki &&
+                wiki.extract &&
+                wiki.type &&
+                wiki.type !== "disambiguation" &&
+                wiki.type !== "no-extract"
+              ) {
+                description = String(wiki.extract).trim();
+                source = "Wikipedia";
+                if (!title && wiki.title) title = wiki.title;
+              }
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+
+        return json({ domain, title, description, source });
       }
 
       return json({ error: "Unknown route", path }, 404);
@@ -292,6 +384,25 @@ export default {
 };
 
 // ── Helpers ──────────────────────────────────────────────────────
+// Small HTML entity decoder for the handful of entities that show up
+// inside <title> and <meta description> tags (&amp; &lt; &gt; &quot;
+// &#39; &nbsp; plus &#NNN; numeric refs).
+function decodeHtmlEntities(s) {
+  if (!s) return s;
+  return s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function vtUrlId(rawUrl) {
   // VirusTotal URL ID = base64url-without-padding of the URL.
   const bytes = new TextEncoder().encode(rawUrl);

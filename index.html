@@ -47,7 +47,14 @@
             />
           </div>
 
-          <!-- Kaspersky and Cloudflare keys are handled via key file only (see format below) -->
+          <div class="auth-control">
+            <label class="file-label" for="kasKey">Kaspersky OpenTip API key</label>
+            <input
+              id="kasKey"
+              type="text"
+              placeholder="Paste Kaspersky OpenTip key"
+            />
+          </div>
         </div>
 
         <div class="manual-actions">
@@ -65,7 +72,7 @@
           <span id="keysFileNote" class="small"></span>
         </div>
 
-        <p class="small" style="margin-top:10px">Load API keys from .txt file format: one key per line, e.g. <code>VT=...</code>, <code>ABUSE=...</code>. Aliases like <code>VIRUSTOTAL</code> and <code>ABUSEIPDB</code> also work.</p>
+        <p class="small" style="margin-top:10px">Load API keys from .txt file format: one key per line, e.g. <code>VT=...</code>, <code>ABUSE=...</code>, <code>KAS=...</code>. Aliases like <code>VIRUSTOTAL</code>, <code>ABUSEIPDB</code>, <code>KASPERSKY</code> also work.</p>
       </section>
 
       <section class="manual-section">
