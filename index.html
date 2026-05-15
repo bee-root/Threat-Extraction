@@ -39,11 +39,6 @@
           </div>
 
           <div class="auth-control">
-            <label class="file-label" for="kasKey">Kaspersky API key</label>
-            <input id="kasKey" type="text" placeholder="Paste Kaspersky key" />
-          </div>
-
-          <div class="auth-control">
             <label class="file-label" for="abuseKey">AbuseIPDB API key</label>
             <input
               id="abuseKey"
@@ -52,14 +47,7 @@
             />
           </div>
 
-          <div class="auth-control">
-            <label class="file-label" for="cfKey">Cloudflare token</label>
-            <input
-              id="cfKey"
-              type="text"
-              placeholder="Paste Cloudflare token"
-            />
-          </div>
+          <!-- Kaspersky and Cloudflare keys are handled via key file only (see format below) -->
         </div>
 
         <div class="manual-actions">
@@ -71,6 +59,13 @@
             Keys are stored locally in the browser.
           </span>
         </div>
+
+        <div style="margin-top:8px">
+          <input id="keysFileInput" type="file" accept=".txt" />
+          <span id="keysFileNote" class="small"></span>
+        </div>
+
+        <p class="small" style="margin-top:10px">Load API keys from .txt file format: one key per line, e.g. <code>VT=...</code>, <code>ABUSE=...</code>. Aliases like <code>VIRUSTOTAL</code> and <code>ABUSEIPDB</code> also work.</p>
       </section>
 
       <section class="manual-section">
@@ -194,12 +189,31 @@
 
       <footer>
         <p>
-          Static dashboard for IOC extraction. API analysis uses the Cloudflare
-          Worker configured in app.js.
+          This OSINT is built for fast, easy triage of IPs, domains,
+          URLs and file hashes in bulk, and to help new cybersecurity analysts
+          become familiar with the existing analysis tools. 
         </p>
+        <p>May the Force be with you, analysts! :)</p>
       </footer>
     </div>
 
     <script src="app.js"></script>
+    <script>
+      // Ensure form fields reflect any keys/manual input stored in localStorage
+      (function () {
+        try {
+          const vt = localStorage.getItem('soc_vt_key') || '';
+          const abuse = localStorage.getItem('soc_abuse_key') || '';
+          if (vt && document.getElementById('vtKey')) document.getElementById('vtKey').value = vt;
+          if (abuse && document.getElementById('abuseKey')) document.getElementById('abuseKey').value = abuse;
+          const mi = localStorage.getItem('manual_input');
+          const mt = localStorage.getItem('manual_type');
+          if (mi && document.getElementById('manualInput')) document.getElementById('manualInput').value = mi;
+          if (mt && document.getElementById('manualType')) document.getElementById('manualType').value = mt;
+        } catch (e) {
+          console.warn('populate from localStorage failed', e.message);
+        }
+      })();
+    </script>
   </body>
 </html>
