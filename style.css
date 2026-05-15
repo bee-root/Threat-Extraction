@@ -40,7 +40,10 @@ header p {
 .upload-section,
 .manual-section,
 .summary-section,
-.results-section {
+.results-section,
+.report-section,
+.analysis-section,
+.auth-section {
   margin-bottom: 24px;
 }
 
@@ -241,6 +244,21 @@ header p {
 
 .result-value a:hover {
   text-decoration: underline;
+}
+
+.analysis-block {
+  margin-top: 4px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: normal;
 }
 
 .osint-button-group {

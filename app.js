@@ -1,4 +1,21 @@
 "use strict";
+// Global error capture for debugging startup failures
+try {
+  window.addEventListener('error', (e) => {
+    try {
+      const el = document.getElementById('keysFileNote');
+      if (el) el.textContent = `ERROR: ${e.message}`;
+    } catch (er) {}
+    console.error('Captured error', e.message, e.error);
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    try {
+      const el = document.getElementById('keysFileNote');
+      if (el) el.textContent = `UNHANDLED REJECTION: ${e.reason}`;
+    } catch (er) {}
+    console.error('Unhandled rejection', e.reason);
+  });
+} catch (e) {}
 /* ═══════════════════════════════════════════════════════════════
    THREAT EXTRACTION DASHBOARD — app.js
    Real API calls via Cloudflare Worker · Keys in localStorage
@@ -15,7 +32,7 @@ const LS = {
   VT: "soc_vt_key",
   ABUSE: "soc_abuse_key",
   KAS: "soc_kas_key",
-  CF: "soc_cf_key",
+  CF: "soc_cf_token",
 };
 
 // ── Console logger ─────────────────────────────────────────────
@@ -374,7 +391,28 @@ const LOG = {
       "color:#8fa8c0;font-family:monospace",
       "color:#f04f5a;font-family:monospace",
     );
+    // Also emit a readable English analysis report summary for analysts.
     console.log("%c" + "█".repeat(60) + "\n", "color:#00c8f0");
+    const total = r.total || 0;
+    const mal = r.malicious || 0;
+    const sus = r.suspicious || 0;
+    const clean = r.clean || 0;
+    const err = r.errors || 0;
+    const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
+    const reportLines = [];
+    reportLines.push(`Analysis Report — Summary of findings`);
+    reportLines.push(`We analyzed ${total} indicator${total === 1 ? "" : "s"} in this run.`);
+    reportLines.push(`Detected ${mal} malicious (${pct(mal)}%), ${sus} suspicious (${pct(sus)}%) and ${clean} clean (${pct(clean)}%).`);
+    if (err) reportLines.push(`There were ${err} errors during analysis; please re-run those items later.`);
+    reportLines.push("");
+    reportLines.push("Recommendations:");
+    reportLines.push(" - Immediately investigate the malicious IOCs, prioritize containment and traffic blocking.");
+    reportLines.push(" - For suspicious items, perform deeper dynamic analysis and retrospective telemetry searches.");
+    reportLines.push(" - Add high-confidence malicious IOCs to blocklists and create detection rules.");
+    reportLines.push(" - Where possible, enrich findings with external OSINT (WHOIS, passive DNS, telemetry).");
+    reportLines.push("");
+    reportLines.push("Note: This summary is a rapid triage output — use the full report for complete analysis details.");
+    console.log(reportLines.join("\n"));
   },
 
   keySaved(name) {
@@ -410,14 +448,18 @@ const manualInput = document.getElementById("manualInput");
 const manualSearchBtn = document.getElementById("manualSearchBtn");
 const manualNote = document.getElementById("manualNote");
 const vtKeyInput = document.getElementById("vtKey");
-const kasKeyInput = document.getElementById("kasKey");
 const abuseKeyInput = document.getElementById("abuseKey");
-const cfKeyInput = document.getElementById("cfKey");
+const kasKeyInput = document.getElementById("kasKey");
 const saveKeysBtn = document.getElementById("saveKeysBtn");
 const authNote = document.getElementById("authNote");
+const keysFileInput = document.getElementById("keysFileInput");
+const keysFileNote = document.getElementById("keysFileNote");
 const startAnalysisBtn = document.getElementById("startAnalysisBtn");
 const stopAnalysisBtn = document.getElementById("stopAnalysisBtn");
 const analysisNote = document.getElementById("analysisNote");
+const reportMaliciousBtn = document.getElementById("reportMaliciousBtn");
+const reportFullBtn = document.getElementById("reportFullBtn");
+const reportNote = document.getElementById("reportNote");
 
 // ── Analysis state ─────────────────────────────────────────────
 let analysisAborted = false;
@@ -431,200 +473,225 @@ const apiCache = {};
 // ── Load keys from localStorage on startup ─────────────────────
 function loadKeys() {
   const vt = localStorage.getItem(LS.VT) || "";
-  const kas = localStorage.getItem(LS.KAS) || "";
   const abuse = localStorage.getItem(LS.ABUSE) || "";
+  const kas = localStorage.getItem(LS.KAS) || "";
   const cf = localStorage.getItem(LS.CF) || "";
   if (vt) {
     vtKeyInput.value = vt;
     LOG.keyLoaded("VirusTotal");
   }
-  if (kas) {
-    kasKeyInput.value = kas;
-    LOG.keyLoaded("Kaspersky");
-  }
   if (abuse) {
     abuseKeyInput.value = abuse;
     LOG.keyLoaded("AbuseIPDB");
   }
-  if (cf) {
-    cfKeyInput.value = cf;
-    LOG.keyLoaded("Cloudflare");
+  if (kas && kasKeyInput) {
+    kasKeyInput.value = kas;
+    LOG.keyLoaded("Kaspersky");
   }
-  if (vt || kas || abuse || cf)
-    authNote.textContent = "Cheile au fost încărcate din browser.";
+  if (cf) LOG.keyLoaded("Cloudflare");
+  if (vt || abuse || kas)
+    authNote.textContent = "Keys have been loaded from the browser.";
+
+  // Debug: show whether keys were read (masked) so we can trace issues.
+  try {
+    const mask = (s) => (s ? `${s.slice(0,4)}…${s.slice(-4)}` : "(none)");
+    if (typeof keysFileNote !== 'undefined' && keysFileNote) {
+      const kasStored = localStorage.getItem(LS.KAS) || "";
+      keysFileNote.textContent = `VT:${mask(vt)} ABUSE:${mask(abuse)} KAS:${mask(kasStored)}`;
+    }
+    console.log('loadKeys debug:', { vtStored: !!vt, abuseStored: !!abuse, vtRaw: vt ? vt.slice(0,6) + '...' : null });
+  } catch (e) {
+    /* ignore */
+  }
+
+  // Restore manual search inputs if available
+  try {
+    const savedManual = localStorage.getItem('manual_input') || '';
+    const savedType = localStorage.getItem('manual_type') || '';
+    if (savedManual) manualInput.value = savedManual;
+    if (savedType) manualType.value = savedType;
+  } catch (e) {
+    // ignore
+  }
 }
 
 // ── Save keys ──────────────────────────────────────────────────
-saveKeysBtn.addEventListener("click", () => {
-  const vt = vtKeyInput.value.trim();
-  const kas = kasKeyInput.value.trim();
-  const abuse = abuseKeyInput.value.trim();
-  const cf = cfKeyInput.value.trim();
-  if (vt) {
-    localStorage.setItem(LS.VT, vt);
-    LOG.keySaved("VirusTotal");
-  } else localStorage.removeItem(LS.VT);
-  if (kas) {
-    localStorage.setItem(LS.KAS, kas);
-    LOG.keySaved("Kaspersky");
-  } else localStorage.removeItem(LS.KAS);
-  if (abuse) {
-    localStorage.setItem(LS.ABUSE, abuse);
-    LOG.keySaved("AbuseIPDB");
-  } else localStorage.removeItem(LS.ABUSE);
-  if (cf) {
-    localStorage.setItem(LS.CF, cf);
-    LOG.keySaved("Cloudflare");
-  } else localStorage.removeItem(LS.CF);
-  authNote.textContent = "Cheile au fost salvate în browser.";
-  updateAnalysisBtnState();
-});
+function setupKeysEventListener() {
+  if (!saveKeysBtn) return;
+  saveKeysBtn.addEventListener('click', () => {
+    const vt = vtKeyInput.value.trim();
+    const abuse = abuseKeyInput.value.trim();
+    const kas = kasKeyInput ? kasKeyInput.value.trim() : "";
+    if (vt) {
+      localStorage.setItem(LS.VT, vt);
+      LOG.keySaved('VirusTotal');
+    } else localStorage.removeItem(LS.VT);
+    if (abuse) {
+      localStorage.setItem(LS.ABUSE, abuse);
+      LOG.keySaved('AbuseIPDB');
+    } else localStorage.removeItem(LS.ABUSE);
+    if (kas) {
+      localStorage.setItem(LS.KAS, kas);
+      LOG.keySaved('Kaspersky');
+    } else localStorage.removeItem(LS.KAS);
+    authNote.textContent = 'Keys have been saved to the browser.';
+    try {
+      const mask = (s) => (s ? `${s.slice(0,4)}…${s.slice(-4)}` : "(none)");
+      if (typeof keysFileNote !== 'undefined' && keysFileNote) {
+        keysFileNote.textContent = `VT:${mask(vt)} ABUSE:${mask(abuse)} KAS:${mask(kas)}`;
+      }
+    } catch (e) {}
+    updateAnalysisBtnState();
+  });
+}
 
 function getKeys() {
   return {
     vt: vtKeyInput.value.trim() || localStorage.getItem(LS.VT) || "",
     abuse: abuseKeyInput.value.trim() || localStorage.getItem(LS.ABUSE) || "",
+    kas:
+      (kasKeyInput && kasKeyInput.value.trim()) ||
+      localStorage.getItem(LS.KAS) ||
+      "",
   };
 }
 
-// ── Trusted domains ────────────────────────────────────────────
-const suspiciousTlds = ["ru", "cn", "tk", "ml", "cf", "ga", "gq"];
-const suspiciousKeywords = [
-  "malware",
-  "phishing",
-  "exploit",
-  "ransom",
-  "crypto",
-  "bitcoin",
-  "attack",
-  "login",
-  "update",
-  "secure",
-  "account",
-  "admin",
-];
-const trustedDomains = [
-  "microsoft.com",
-  "outlook.com",
-  "protection.outlook.com",
-  "google.com",
-  "apple.com",
-  "amazon.com",
-  "github.com",
-  "facebook.com",
-  "twitter.com",
-  "linkedin.com",
-  "reddit.com",
-  "dropbox.com",
-  "adobe.com",
-  "slack.com",
-  "zoom.com",
-  "cisco.com",
-  "ibm.com",
-  "oracle.com",
-  "salesforce.com",
-  "stripe.com",
-  "paypal.com",
-  "github.io",
-  "cloudflare.com",
-  "cloudfront.net",
-  "akamai.net",
-  "amazonaws.com",
-  "azure.com",
-  "gstatic.com",
-  "googleapis.com",
-];
-function isDomainTrusted(domain) {
-  if (!domain || domain === "N/A") return false;
-  const d = domain.toLowerCase();
-  return trustedDomains.some((t) => d === t || d.endsWith("." + t));
-}
-
-// ── ISP map ────────────────────────────────────────────────────
-const ispMap = {
-  "1.": "APNIC",
-  "3.": "GE",
-  "4.": "Level3",
-  "5.": "RIPE NCC",
-  "8.": "Level3",
-  "13.": "Microsoft",
-  "15.": "Verizon",
-  "18.": "Amazon",
-  "35.": "Google",
-  "40.": "Cogent",
-  "44.": "Comcast",
-  "50.": "Comcast",
-  "52.": "Amazon",
-  "54.": "Amazon",
-  "66.": "Level3",
-  "69.": "Cox",
-  "72.": "Comcast",
-  "74.": "Comcast",
-  "75.": "Comcast",
-  "76.": "Comcast",
-  "77.": "Rostelecom",
-  "78.": "Rostelecom",
-  "79.": "Nitel",
-  "80.": "Rostelecom",
-  "81.": "Nitel",
-  "82.": "Nitel",
-  "83.": "Nitel",
-  "84.": "Nitel",
-  "85.": "Nitel",
-  "86.": "Nitel",
-  "87.": "Yandex",
-  "88.": "Nitel",
-  "89.": "Telecom Italia",
-  "90.": "Telecom Italia",
-  "91.": "Nitel",
-  "92.": "Nitel",
-  "93.": "Nitel",
-  "94.": "Nitel",
-  "95.": "Nitel",
-  "96.": "Nitel",
-  "97.": "Comcast",
-  "98.": "Comcast",
-  "99.": "Level3",
-  "100.": "Comcast",
-  "103.": "APNIC",
-  "104.": "Level3",
-  "113.": "APNIC",
-  "127.": "Loopback",
-  "128.": "Research",
-  "130.": "Research",
-  "149.": "Level3",
-  "150.": "RIPE NCC",
-  "159.": "RIPE NCC",
-  "173.": "Level3",
-  "174.": "Cogent",
-  "175.": "APNIC",
-  "176.": "RIPE NCC",
-  "181.": "LACNIC",
-  "183.": "APNIC",
-  "184.": "Level3",
-  "185.": "RIPE NCC",
-  "192.": "RIPE NCC",
-  "193.": "RIPE NCC",
-  "194.": "RIPE NCC",
-  "195.": "RIPE NCC",
-  "197.": "AFRINIC",
-  "198.": "Level3",
-  "199.": "Level3",
-  "200.": "LACNIC",
-  "202.": "APNIC",
-  "203.": "APNIC",
-  "204.": "Level3",
-  "208.": "Cogent",
-  "209.": "Cogent",
-  "210.": "APNIC",
-  "212.": "RIPE NCC",
-  "213.": "RIPE NCC",
-  "216.": "Level3",
-  "217.": "RIPE NCC",
-  "218.": "APNIC",
+// ── Load API keys from .txt file ───────────────────────────────
+// Accepts lines like:
+//   VT=abcdef               vt: abcdef
+//   VIRUSTOTAL = abcdef     # comments allowed
+//   ABUSE abcdef            ABUSEIPDB=...
+const KEY_ALIASES = {
+  vt: ["vt", "virustotal", "vt_key", "vtkey"],
+  abuse: ["abuse", "abuseipdb", "abuse_key", "abusekey"],
+  kas: ["kas", "kaspersky", "kas_key", "kaskey", "opentip"],
 };
 
+function parseKeysFile(text) {
+  const found = { vt: null, abuse: null, kas: null };
+  const lines = text.split(/\r?\n/);
+  for (const rawLine of lines) {
+    // Strip inline comments (# or //) and trim.
+    const line = rawLine.replace(/(\s)(#|\/\/).*$/, "$1").trim();
+    if (!line) continue;
+    // Match KEY=value | KEY:value | KEY value
+    const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*[:=\s]\s*(.+)$/);
+    if (!m) continue;
+    const rawKey = m[1].toLowerCase();
+    const rawVal = m[2].trim().replace(/^["']|["']$/g, "");
+    if (!rawVal) continue;
+    for (const [target, aliases] of Object.entries(KEY_ALIASES)) {
+      if (aliases.includes(rawKey)) {
+        found[target] = rawVal;
+        break;
+      }
+    }
+  }
+  return found;
+}
+
+if (keysFileInput) {
+  keysFileInput.addEventListener("change", async () => {
+    const file = keysFileInput.files && keysFileInput.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = parseKeysFile(text);
+      const filled = [];
+      if (parsed.vt) {
+        vtKeyInput.value = parsed.vt;
+        localStorage.setItem(LS.VT, parsed.vt);
+        LOG.keySaved("VirusTotal");
+        filled.push("VirusTotal");
+      }
+      if (parsed.abuse) {
+        abuseKeyInput.value = parsed.abuse;
+        localStorage.setItem(LS.ABUSE, parsed.abuse);
+        LOG.keySaved("AbuseIPDB");
+        filled.push("AbuseIPDB");
+      }
+      if (parsed.kas) {
+        if (kasKeyInput) kasKeyInput.value = parsed.kas;
+        localStorage.setItem(LS.KAS, parsed.kas);
+        LOG.keySaved("Kaspersky");
+        filled.push("Kaspersky");
+      }
+
+      if (filled.length) {
+        keysFileNote.textContent = `✓ Loaded ${filled.length} key(s): ${filled.join(", ")}.`;
+        authNote.textContent = "Keys loaded from file and saved.";
+      } else {
+        keysFileNote.textContent =
+          "No recognized keys found. Expected lines like 'VT=...', 'ABUSE=...' or 'KAS=...'.";
+      }
+      updateAnalysisBtnState();
+    } catch (e) {
+      keysFileNote.textContent = `Error reading file: ${e.message}`;
+        } finally {
+          keysFileInput.value = "";
+        }
+      });
+    }
+
+// ── Helpers ────────────────────────────────────────────────────
+// Trusted-domain / suspicious-TLD / hardcoded-ISP lists were removed.
+// Verdicts now come from the real API responses (VirusTotal, AbuseIPDB,
+// GreyNoise, Shodan InternetDB, URLhaus).
+function formatVtDate(unix) {
+  if (!unix) return null;
+  const d = new Date(unix * 1000);
+  if (isNaN(d.getTime())) return null;
+  return d.toISOString().split("T")[0];
+}
+
+// Pull a 2-letter country code out of a VT domain response.
+// VT usually doesn't surface country directly for domains, but the raw whois
+// string often contains a 'Registrant Country' or 'Country' line.
+function extractDomainCountry(a) {
+  if (!a) return null;
+  if (a.country && typeof a.country === "string") return a.country.toUpperCase();
+  const whois = a.whois || "";
+  if (!whois) return null;
+  const patterns = [
+    /Registrant Country:\s*([A-Za-z]{2,40})/i,
+    /Admin Country:\s*([A-Za-z]{2,40})/i,
+    /Country:\s*([A-Za-z]{2,40})/i,
+  ];
+  for (const re of patterns) {
+    const m = whois.match(re);
+    if (m && m[1]) return m[1].trim().toUpperCase();
+  }
+  return null;
+}
+
+// Stitch together the multi-line Analysis block from a default template,
+// filling only the rows we actually have data for; otherwise show '—'.
+function buildAnalysisBlock(verdict, sections) {
+  const lines = [`THREAT LEVEL: ${verdict}`];
+  for (const { title, rows } of sections) {
+    lines.push("");
+    lines.push(`[ ${title} ]`);
+    for (const [label, value] of rows) {
+      const v = value === undefined || value === null || value === "" ? "—" : value;
+      lines.push(`  • ${label.padEnd(20)}${v}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 // ── OSINT sources ──────────────────────────────────────────────
+// Each category lists only providers that genuinely support that IOC type.
+// IP-only services (e.g. AbuseIPDB, Shodan, GreyNoise, ThreatSummary/guardpot)
+// don't appear under domain/url/hash. Hash-specific sandboxes
+// (MalwareBazaar, Hybrid Analysis, Triage, etc.) only appear under hash.
+const urlHost = (v) => {
+  try {
+    return new URL(v).hostname;
+  } catch {
+    return v;
+  }
+};
+
 const osintSources = {
   ip: [
     {
@@ -634,15 +701,8 @@ const osintSources = {
     { label: "AbuseIPDB", url: (v) => `https://www.abuseipdb.com/check/${v}` },
     {
       label: "IPQualityScore",
-      url: (v) => `https://www.ipqualityscore.com/free-ip-lookup/${v}`,
-    },
-    {
-      label: "CrowdSec",
-      url: (v) => `https://app.crowdsec.net/analysis/ip/${v}`,
-    },
-    {
-      label: "Cloudflare Radar",
-      url: (v) => `https://radar.cloudflare.com/${v}`,
+      url: (v) =>
+        `https://www.ipqualityscore.com/free-ip-lookup-proxy-vpn-test/lookup/${v}`,
     },
     {
       label: "Talos",
@@ -650,24 +710,46 @@ const osintSources = {
         `https://talosintelligence.com/reputation_center/lookup?search=${v}`,
     },
     {
+      label: "Cloudflare Radar",
+      url: (v) => `https://radar.cloudflare.com/ip/${v}`,
+    },
+    {
       label: "Kaspersky OpenTip",
       url: (v) => `https://opentip.kaspersky.com/${v}`,
+    },
+    
+    { label: "GreyNoise", url: (v) => `https://viz.greynoise.io/ip/${v}` },
+    {
+      label: "AlienVault OTX",
+      url: (v) => `https://otx.alienvault.com/indicator/ip/${v}`,
+    },
+    {
+      label: "ThreatSummary",
+      url: (v) => `https://threatsummary.guardpot.com/search?query=${v}`,
     },
   ],
   url: [
     {
       label: "VirusTotal",
       url: (v) =>
-        `https://www.virustotal.com/gui/url/${encodeURIComponent(v)}/detection`,
+        `https://www.virustotal.com/gui/search/${encodeURIComponent(v)}`,
     },
     {
       label: "URLScan",
       url: (v) => `https://urlscan.io/search/#${encodeURIComponent(v)}`,
     },
     {
-      label: "Blue Coat",
+      label: "URLVoid",
+      url: (v) => `https://www.urlvoid.com/scan/${urlHost(v)}/`,
+    },
+    {
+      label: "Sucuri SiteCheck",
+      url: (v) => `https://sitecheck.sucuri.net/results/${encodeURIComponent(v)}`,
+    },
+    {
+      label: "Symantec SiteReview",
       url: (v) =>
-        `https://sitereview.bluecoat.com/sitereview.jsp#/?url=${encodeURIComponent(v)}`,
+        `https://sitereview.bluecoat.com/#/lookup-result/${encodeURIComponent(v)}`,
     },
     {
       label: "Talos",
@@ -679,14 +761,8 @@ const osintSources = {
       url: (v) => `https://opentip.kaspersky.com/${encodeURIComponent(v)}`,
     },
     {
-      label: "ThreatSummary",
-      url: (v) =>
-        `https://threatsummary.guardpot.com/search?query=${encodeURIComponent(v)}`,
-    },
-    {
-      label: "CrowdSec",
-      url: (v) =>
-        `https://app.crowdsec.net/analysis/url/${encodeURIComponent(v)}`,
+      label: "AlienVault OTX",
+      url: (v) => `https://otx.alienvault.com/indicator/url/${encodeURIComponent(v)}`,
     },
   ],
   domain: [
@@ -696,31 +772,40 @@ const osintSources = {
     },
     {
       label: "URLScan",
-      url: (v) => `https://urlscan.io/search/#${encodeURIComponent(v)}`,
+      url: (v) => `https://urlscan.io/domain/${v}`,
     },
     {
-      label: "Blue Coat",
+      label: "URLVoid",
+      url: (v) => `https://www.urlvoid.com/scan/${v}/`,
+    },
+    {
+      label: "Symantec SiteReview",
       url: (v) =>
-        `https://sitereview.bluecoat.com/sitereview.jsp#/?url=${encodeURIComponent(v)}`,
+        `https://sitereview.bluecoat.com/#/lookup-result/${encodeURIComponent(v)}`,
     },
     {
       label: "Talos",
       url: (v) =>
-        `https://talosintelligence.com/reputation_center/lookup?search=${encodeURIComponent(v)}`,
+        `https://talosintelligence.com/reputation_center/lookup?search=${v}`,
     },
     {
       label: "Cloudflare Radar",
-      url: (v) => `https://radar.cloudflare.com/${v}`,
+      url: (v) => `https://radar.cloudflare.com/domains/domain/${v}`,
     },
+    { label: "Shodan", url: (v) => `https://www.shodan.io/search?query=${encodeURIComponent(v)}` },
     {
       label: "Kaspersky OpenTip",
       url: (v) => `https://opentip.kaspersky.com/${encodeURIComponent(v)}`,
     },
     {
-      label: "ThreatSummary",
-      url: (v) =>
-        `https://threatsummary.guardpot.com/search?query=${encodeURIComponent(v)}`,
+      label: "SecurityTrails",
+      url: (v) => `https://securitytrails.com/domain/${v}/dns`,
     },
+    {
+      label: "AlienVault OTX",
+      url: (v) => `https://otx.alienvault.com/indicator/domain/${v}`,
+    },
+    { label: "WHOIS", url: (v) => `https://who.is/whois/${v}` },
   ],
   hash: [
     {
@@ -728,22 +813,67 @@ const osintSources = {
       url: (v) => `https://www.virustotal.com/gui/file/${v}/detection`,
     },
     {
+      label: "MalwareBazaar",
+      url: (v) => `https://bazaar.abuse.ch/sample/${v}/`,
+    },
+    {
+      label: "Hybrid Analysis",
+      url: (v) => `https://www.hybrid-analysis.com/search?query=${v}`,
+    },
+    { label: "Triage", url: (v) => `https://tria.ge/s?q=${v}` },
+    {
+      label: "Joe Sandbox",
+      url: (v) => `https://www.joesandbox.com/search?q=${v}`,
+    },
+    {
       label: "Kaspersky OpenTip",
       url: (v) => `https://opentip.kaspersky.com/${v}`,
     },
     {
-      label: "ThreatSummary",
-      url: (v) => `https://threatsummary.guardpot.com/search?query=${v}`,
+      label: "AlienVault OTX",
+      url: (v) => `https://otx.alienvault.com/indicator/file/${v}`,
+    },
+    {
+      label: "ThreatFox",
+      url: (v) => `https://threatfox.abuse.ch/browse.php?search=hash%3A${v}`,
     },
   ],
 };
 
 // ── Event listeners ────────────────────────────────────────────
-fileInput.addEventListener("change", handleFiles);
-manualSearchBtn.addEventListener("click", handleManualSearch);
-clearBtn.addEventListener("click", resetDashboard);
-startAnalysisBtn.addEventListener("click", startAnalysis);
-stopAnalysisBtn.addEventListener("click", stopAnalysis);
+function init() {
+  fileInput.addEventListener("change", handleFiles);
+  manualSearchBtn.addEventListener("click", handleManualSearch);
+  clearBtn.addEventListener("click", resetDashboard);
+  startAnalysisBtn.addEventListener("click", startAnalysis);
+  stopAnalysisBtn.addEventListener("click", stopAnalysis);
+  reportMaliciousBtn.addEventListener("click", () => downloadReport("malicious"));
+  reportFullBtn.addEventListener("click", () => downloadReport("full"));
+  setupKeysEventListener();
+  // Ensure inputs are populated from localStorage (robust startup path)
+  try {
+    const vt = localStorage.getItem(LS.VT) || "";
+    const abuse = localStorage.getItem(LS.ABUSE) || "";
+    const kas = localStorage.getItem(LS.KAS) || "";
+    if (vt && vtKeyInput) vtKeyInput.value = vt;
+    if (abuse && abuseKeyInput) abuseKeyInput.value = abuse;
+    if (kas && kasKeyInput) kasKeyInput.value = kas;
+    if (vt || abuse || kas) authNote.textContent = 'Keys have been loaded from the browser.';
+    // Update visible debug note
+    if (typeof keysFileNote !== 'undefined' && keysFileNote) {
+      const mask = (s) => (s ? `${s.slice(0,4)}…${s.slice(-4)}` : "(none)");
+      keysFileNote.textContent = `VT:${mask(vt)} ABUSE:${mask(abuse)} KAS:${mask(kas)}`;
+    }
+  } catch (e) {
+    console.warn('init key population failed', e.message);
+  }
+  // Also call loadKeys() for backward compatibility
+  if (typeof loadKeys === 'function') loadKeys();
+  try { window.__appInitialized = true; } catch (e) {}
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+else init();
 
 // ── File handling ──────────────────────────────────────────────
 function handleFiles() {
@@ -769,11 +899,18 @@ function handleManualSearch() {
   const raw = manualInput.value.trim();
   if (!raw) {
     manualNote.textContent =
-      "Introduce cel puțin o valoare pentru procesare manuală.";
+      "Enter at least one value for manual processing.";
     return;
   }
-  manualNote.textContent = `Procesare manuală pentru: ${manualType.value.toUpperCase()}`;
+  manualNote.textContent = `Manual processing for: ${manualType.value.toUpperCase()}`;
   processManualInput(raw, manualType.value);
+  // Persist manual search so it survives refresh
+  try {
+    localStorage.setItem('manual_input', raw);
+    localStorage.setItem('manual_type', manualType.value);
+  } catch (e) {
+    console.warn('Could not persist manual search:', e.message);
+  }
 }
 
 function processManualInput(text, type) {
@@ -865,17 +1002,51 @@ function renderAll(ips, urls, domains, hashes) {
   countHashes.textContent = hashD.length;
   ipContainer.innerHTML = ipD.length
     ? createIpTable(ipD)
-    : "<p>Nu s-au găsit IP-uri.</p>";
+    : "<p>No IPs found.</p>";
   urlContainer.innerHTML = urlD.length
     ? createUrlTable(urlD)
-    : "<p>Nu s-au găsit URL-uri.</p>";
+    : "<p>No URLs found.</p>";
   domainContainer.innerHTML = domD.length
     ? createDomainTable(domD)
-    : "<p>Nu s-au găsit domenii.</p>";
+    : "<p>No domains found.</p>";
   hashContainer.innerHTML = hashD.length
     ? createHashTable(hashD)
-    : "<p>Nu s-au găsit hash-uri.</p>";
+    : "<p>No hashes found.</p>";
   updateAnalysisBtnState();
+  // If there are file hashes and a VirusTotal key, auto-fetch VT details
+  // for any hashes not yet present in apiCache. This improves UX so the
+  // file entries populate with details without an explicit "Start Analysis"
+  // click. Only run when not already performing a full analysis.
+  try {
+    autoFetchHashesIfNeeded();
+  } catch (e) {
+    console.warn('autoFetchHashesIfNeeded failed', e.message);
+  }
+}
+
+async function autoFetchHashesIfNeeded() {
+  if (analysisRunning) return;
+  const { vt } = getKeys();
+  if (!vt) return;
+  const missing = currentHashes.filter((h) => !apiCache[h]);
+  if (!missing.length) return;
+  // Don't block render; fetch in background and update entries as they arrive.
+  for (const h of missing) {
+    (async (hash) => {
+      try {
+        const vtData = await vtFetch(`/vt/hash/${hash}`);
+        apiCache[hash] = { vt: vtData };
+        LOG.hash(hash, vtData);
+      } catch (e) {
+        apiCache[hash] = { err: e.message };
+        LOG.error(hash, 'hash', e.message);
+      }
+      // Re-render to show updated details for this hash only.
+      try {
+        renderAll(currentIps, currentUrls, currentDomains, currentHashes);
+      } catch (e) {}
+    })(h);
+  }
 }
 
 // ── Extractors ─────────────────────────────────────────────────
@@ -931,102 +1102,440 @@ function extractHashes(text) {
 function getIpDetails(ip) {
   const isPrivate = isPrivateIp(ip),
     reserved = isReservedIp(ip);
-  const isp = ispMap[ip.split(".")[0] + "."] || "Unknown";
+  const ipType = reserved ? "Reserved" : isPrivate ? "Private" : "Public";
   const cached = apiCache[ip];
+
   if (cached && !cached.err) {
-    const stats =
-      (cached.vt &&
-        cached.vt.data &&
-        cached.vt.data.attributes &&
-        cached.vt.data.attributes.last_analysis_stats) ||
-      null;
+    const vtAttr =
+      (cached.vt && cached.vt.data && cached.vt.data.attributes) || null;
+    const stats = (vtAttr && vtAttr.last_analysis_stats) || null;
     const aData = (cached.abuse && cached.abuse.data) || null;
+
     const mal = stats ? (stats.malicious || 0) + (stats.suspicious || 0) : 0;
     const total = stats ? Object.values(stats).reduce((a, b) => a + b, 0) : 0;
-    const abScore = aData ? aData.abuseConfidenceScore : 0;
+    const abScore = aData ? aData.abuseConfidenceScore || 0 : 0;
+    const reportCount = (aData && aData.totalReports) || 0;
     const score = Math.min(100, Math.max(mal * 8, abScore));
-    const note =
+
+    // ISP comes from AbuseIPDB; fall back to VT's as_owner if missing.
+    const isp =
+      (aData && aData.isp) || (vtAttr && vtAttr.as_owner) || null;
+    const country =
+      (aData && (aData.countryCode || aData.countryName)) ||
+      (vtAttr && vtAttr.country) ||
+      null;
+    const usageType = (aData && aData.usageType) || null;
+    const resolvedDomain = (aData && aData.domain) || null;
+    const asn = vtAttr && vtAttr.asn ? `AS${vtAttr.asn}` : null;
+
+    const verdict =
       mal >= 5 || abScore >= 75
-        ? `⚠ Malitios: ${mal}/${total} VT vendors · ${abScore}% AbuseIPDB`
+        ? "⚠ MALICIOUS"
         : mal >= 1 || abScore >= 25
-          ? `⚡ Suspect: ${mal}/${total} VT vendors · ${abScore}% AbuseIPDB`
-          : `✓ Curat: ${mal}/${total} VT vendors · ${abScore}% AbuseIPDB`;
+          ? "⚡ SUSPICIOUS"
+          : "✓ CLEAN";
+    // Human-readable prose summary for analysts (verdict + real OSINT reputation)
+    const classification = verdict.startsWith("⚠")
+      ? "malicious"
+      : verdict.startsWith("⚡")
+        ? "suspicious"
+        : "clean";
+    const abusePhrase = reportCount
+      ? `, according to recent abuse/phishing/malware-related reports (${reportCount})`
+      : "";
+    const prose = `This IP address is classified as ${classification} based on multiple OSINT sources${abusePhrase}.`;
+
+    // Normalize attack evidence into concise categories (no raw log/comment dumps).
+    const attackTypes = new Set();
+    const addAttackTypeFromText = (text) => {
+      const t = String(text || "").toLowerCase();
+      if (!t) return;
+      if (/ssh|\b22\b/.test(t)) attackTypes.add("SSH");
+      if (/rdp|\b3389\b/.test(t)) attackTypes.add("RDP");
+      if (/brute[\s-]?force|credential stuffing|password spray/.test(t)) attackTypes.add("Brute-force");
+      if (/phish|spoof/.test(t)) attackTypes.add("Phishing");
+      if (/spam|smtp|mail|dnsbl|blacklist|spamhaus|spamcop/.test(t)) attackTypes.add("Email spam/abuse");
+      if (/scan|port scan|recon|enumeration/.test(t)) attackTypes.add("Port scanning/recon");
+      if (/ddos|dos|flood/.test(t)) attackTypes.add("DDoS/DoS");
+      if (/exploit|sql injection|web attack|xss|rce/.test(t)) attackTypes.add("Exploitation/Web attack");
+      if (/malware|trojan|ransom|botnet|c2|command.?and.?control/.test(t)) attackTypes.add("Malware/Botnet activity");
+      if (/proxy|vpn|tor/.test(t)) attackTypes.add("Proxy/VPN/Tor abuse");
+    };
+
+    const abuseCategoryMap = {
+      4: "DDoS/DoS",
+      5: "Brute-force",
+      7: "Phishing",
+      9: "Proxy/VPN/Tor abuse",
+      10: "Email spam/abuse",
+      11: "Email spam/abuse",
+      12: "Email spam/abuse",
+      13: "Proxy/VPN/Tor abuse",
+      14: "Port scanning/recon",
+      15: "Exploitation/Web attack",
+      16: "Exploitation/Web attack",
+      18: "Brute-force",
+      20: "Malware/Botnet activity",
+      21: "Exploitation/Web attack",
+      22: "SSH",
+      23: "IoT-targeted attack",
+    };
+
+    try {
+      // Attack types are derived only from AbuseIPDB report details.
+      if (aData && aData.reports && Array.isArray(aData.reports)) {
+        for (const rep of aData.reports) {
+          if (!rep) continue;
+          addAttackTypeFromText(rep.comment || "");
+          if (Array.isArray(rep.categories)) {
+            for (const c of rep.categories) {
+              const mapped = abuseCategoryMap[c];
+              if (mapped) attackTypes.add(mapped);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      /* ignore */
+    }
+
+    let attacksNote = "—";
+    if (attackTypes.size) {
+      attacksNote = Array.from(attackTypes).slice(0, 6).join(", ");
+    } else if (abScore >= 25 || reportCount > 0) {
+      attacksNote = "Abuse reported (attack type not specified)";
+    }
+
+    // GreyNoise Community classification (benign / malicious / unknown
+    // + actor name like "Shodan" / "Censys" if recognised).
+    const gn = cached.greynoise || null;
+    const gnClass = gn
+      ? gn.classification
+        ? gn.classification.charAt(0).toUpperCase() + gn.classification.slice(1)
+        : gn.noise
+          ? "Noise"
+          : null
+      : null;
+    const gnActor = (gn && gn.name && gn.name !== "unknown") ? gn.name : null;
+
+    // Shodan InternetDB (no-key) — tags + open ports + vulns/CVEs.
+    const sh = cached.shodan || null;
+    const shTags = sh && Array.isArray(sh.tags) && sh.tags.length
+      ? sh.tags.slice(0, 8).join(", ")
+      : null;
+    const shPorts =
+      sh && Array.isArray(sh.ports) && sh.ports.length
+        ? sh.ports.slice(0, 12).join(", ")
+        : null;
+    const shCves =
+      sh && Array.isArray(sh.vulns) && sh.vulns.length
+        ? `${sh.vulns.length} CVE${sh.vulns.length === 1 ? "" : "s"}: ${sh.vulns.slice(0, 4).join(", ")}${sh.vulns.length > 4 ? "…" : ""}`
+        : null;
+
+    const note = prose + "\n\n" + buildAnalysisBlock(verdict, [
+      {
+        title: "DETECTION METRICS",
+        rows: [
+          ["VirusTotal", `${mal}/${total}`],
+          ["AbuseIPDB", `${abScore}%`],
+          ["GreyNoise", gnClass ? (gnActor ? `${gnClass} — ${gnActor}` : gnClass) : null],
+        ],
+      },
+      {
+        title: "NETWORK INFO",
+        rows: [
+          ["ISP", isp || "—"],
+          ["Country", country || "—"],
+          ["ASN", asn || "—"],
+          ["Usage Type", usageType || "—"],
+          ["Resolved Domain", resolvedDomain || "—"],
+        ],
+      },
+      {
+        title: "SHODAN",
+        rows: [
+          ["Open Ports", shPorts],
+          ["Tags", shTags],
+          ["Vulnerabilities", shCves],
+        ],
+      },
+      {
+        title: "ATTACKS",
+        rows: [["Observed Attack Types", attacksNote]],
+      },
+      {
+        title: "CATEGORY",
+        rows: [["IP Type", ipType]],
+      },
+    ]);
+
     return {
-      category: reserved ? "Reserved" : isPrivate ? "Private" : "Public",
-      isp,
+      category: ipType,
+      isp: isp || "—",
       vtVendors: `${mal}/${total}`,
       abuseConfidence: `${abScore}%`,
-      talosReputation:
-        abScore >= 75 || mal >= 10
-          ? "Negative"
-          : abScore >= 50 || mal >= 5
-            ? "Poor"
-            : abScore >= 20 || mal >= 2
-              ? "Neutral"
-              : "Good",
+      country: country || "—",
       note,
       score,
       isDetected: mal > 0 || abScore > 25,
     };
   }
+
+  const baseNote = buildAnalysisBlock(
+    reserved
+      ? "— RESERVED"
+      : isPrivate
+        ? "— PRIVATE"
+        : "— NOT YET ANALYZED",
+    [
+      {
+        title: "DETECTION METRICS",
+        rows: [
+          ["VirusTotal", null],
+          ["AbuseIPDB", null],
+        ],
+      },
+      {
+        title: "NETWORK INFO",
+        rows: [
+          ["ISP", null],
+          ["Country", null],
+          ["ASN", null],
+          ["Usage Type", null],
+          ["Resolved Domain", null],
+        ],
+      },
+      {
+        title: "CATEGORY",
+        rows: [["IP Type", ipType]],
+      },
+    ],
+  );
+
   return {
-    category: reserved ? "Reserved" : isPrivate ? "Private" : "Public",
-    isp,
+    category: ipType,
+    isp: "—",
     vtVendors: "—",
     abuseConfidence: "—",
-    talosReputation: "—",
-    note: reserved
-      ? "IP rezervat - nu prezintă risc direct"
-      : isPrivate
-        ? "IP privat/intern - nu accesibil public"
-        : "Nu a fost analizat încă",
+    country: "—",
+    note: baseNote,
     score: reserved ? 5 : isPrivate ? 10 : 25,
     isDetected: false,
   };
 }
 
 function getDomainDetails(domain) {
-  if (isDomainTrusted(domain))
-    return {
-      vtVendors: 0,
-      talosReputation: "Good",
-      note: "Domeniu de încredere - reputație bună pe toate sursele OSINT",
-      score: 5,
-      isDetected: false,
-    };
   const cached = apiCache[domain];
   if (cached && cached.vt && cached.vt.data && cached.vt.data.attributes) {
-    const stats = cached.vt.data.attributes.last_analysis_stats || {};
+    const a = cached.vt.data.attributes;
+    const stats = a.last_analysis_stats || {};
     const mal = (stats.malicious || 0) + (stats.suspicious || 0);
-    const total = Object.values(stats).reduce((a, b) => a + b, 0);
+    const total = Object.values(stats).reduce((a2, b) => a2 + b, 0);
+    const creationDate = formatVtDate(a.creation_date);
+    const lastModified =
+      formatVtDate(a.last_update_date) || formatVtDate(a.last_modification_date);
+    const registrar = a.registrar || null;
+    const country = extractDomainCountry(a);
+    const categories =
+      a.categories && typeof a.categories === "object"
+        ? [...new Set(Object.values(a.categories))].join(", ")
+        : null;
+    const reputation =
+      typeof a.reputation === "number" ? String(a.reputation) : null;
+
+    // Content category — Kaspersky OpenTip primary (single canonical
+    // label like "Search engines and portals"); fall back to the most
+    // common label across VirusTotal's vendor-keyed map. Labels are
+    // normalised (Title Case, dashes → spaces) before voting so
+    // "search-engines" and "Search engines" don't compete.
+    const normaliseCategory = (raw) =>
+      String(raw)
+        .replace(/[-_/]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase()
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+
+    let contentCategory = null;
+    let contentCategorySource = null;
+
+    // 1) Kaspersky OpenTip — DomainGeneralInfo.Categories (or
+    //    CategoriesWithZone[].Name) is a single clean label.
+    const kas = cached.kas || null;
+    if (kas) {
+      const dgi = kas.DomainGeneralInfo || null;
+      let kasLabel = null;
+      if (dgi) {
+        if (
+          Array.isArray(dgi.CategoriesWithZone) &&
+          dgi.CategoriesWithZone.length &&
+          dgi.CategoriesWithZone[0].Name
+        ) {
+          kasLabel = String(dgi.CategoriesWithZone[0].Name).trim();
+        } else if (Array.isArray(dgi.Categories) && dgi.Categories.length) {
+          kasLabel = String(dgi.Categories[0]).trim();
+        }
+      }
+      if (kasLabel) {
+        contentCategory = normaliseCategory(kasLabel);
+        contentCategorySource = "Kaspersky";
+      }
+    }
+
+    // 2) VirusTotal fallback — vote among vendor-keyed categories.
+    if (!contentCategory && a.categories && typeof a.categories === "object") {
+      const counts = {};
+      for (const v of Object.values(a.categories)) {
+        if (!v) continue;
+        const label = normaliseCategory(v);
+        if (!label) continue;
+        counts[label] = (counts[label] || 0) + 1;
+      }
+      const sorted = Object.entries(counts).sort((x, y) => y[1] - x[1]);
+      if (sorted.length === 1) contentCategory = sorted[0][0];
+      else if (sorted.length > 1) {
+        contentCategory =
+          sorted[0][1] > sorted[1][1]
+            ? sorted[0][0]
+            : `${sorted[0][0]} / ${sorted[1][0]}`;
+      }
+      if (contentCategory) contentCategorySource = "VirusTotal";
+    }
+
+    // Debug: log raw category sources so we can tell which one
+    // contributed (or didn't) for any given domain.
+    try {
+      console.log(
+        `%c[Categories] %c${domain}`,
+        "color:#f0c040;font-weight:bold;font-family:monospace",
+        "color:#d4e2f0;font-family:monospace",
+        {
+          kaspersky: kas && kas.DomainGeneralInfo
+            ? {
+                Categories: kas.DomainGeneralInfo.Categories,
+                CategoriesWithZone: kas.DomainGeneralInfo.CategoriesWithZone,
+              }
+            : "(no Kaspersky data)",
+          virustotal: a.categories || "(no VT categories field)",
+        },
+      );
+    } catch {
+      /* ignore */
+    }
+
+    // Description (homepage meta / Wikipedia / fallback).
+    const desc = cached.describe || null;
+    const descTruncated = desc && desc.description
+      ? (desc.description.length > 350
+          ? desc.description.slice(0, 347).trimEnd() + "…"
+          : desc.description)
+      : null;
+    const descriptionValue = descTruncated
+      ? `${descTruncated}${desc.source ? `\n                      — source: ${desc.source}` : ""}`
+      : "No description found for this domain";
+    // Also expose a short/plain description and source separately so the
+    // UI can display a single-line summary (useful for quick search-style
+    // outputs like the Google example the user requested).
+    const descriptionShort = descTruncated || null;
+    const descriptionSource = desc && desc.source ? String(desc.source) : null;
+
+    const verdict =
+      mal >= 5 ? "⚠ MALICIOUS" : mal >= 1 ? "⚡ SUSPICIOUS" : "✓ CLEAN";
+    const classification = mal >= 5 ? "malicious" : mal >= 1 ? "suspicious" : "clean";
+    const prose = `This domain is classified as ${classification} based on multiple OSINT sources, with ${mal} vendor(s) flagging it.`;
+
+    // Place structured analysis block above the prose summary (consistent with IP entries)
+    const note = buildAnalysisBlock(verdict, [
+      {
+        title: "DESCRIPTION",
+        rows: [["Summary", descriptionValue]],
+      },
+      {
+        title: "DETECTION METRICS",
+        rows: [
+          ["VirusTotal", `${mal}/${total} vendors flagged this domain`],
+        ],
+      },
+      {
+        title: "REGISTRATION",
+        rows: [
+          ["Creation Date", creationDate],
+          ["Last Updated", lastModified],
+          ["Registrar", registrar],
+          ["Country", country],
+        ],
+      },
+      {
+        title: "CATEGORIZATION",
+        rows: [
+          [
+            "Content Category",
+            contentCategory
+              ? contentCategorySource
+                ? `${contentCategory} (${contentCategorySource})`
+                : contentCategory
+              : null,
+          ],
+        ],
+      },
+    ]) + "\n\n" + prose;
+
     return {
-      vtVendors: mal,
-      talosReputation:
-        mal >= 10
-          ? "Negative"
-          : mal >= 5
-            ? "Poor"
-            : mal >= 2
-              ? "Neutral"
-              : "Good",
-      note:
-        mal > 0
-          ? `${mal}/${total} VT vendors semnalează`
-          : "✓ Curat pe VirusTotal",
+      vtVendors: `${mal}/${total}`,
+      creationDate: creationDate || "—",
+      registrar: registrar || "—",
+      country: country || "—",
+      note,
       score: Math.min(100, 30 + mal * 10),
       isDetected: mal > 0,
+      // Expose the chosen content category and where it came from
+      contentCategory: contentCategory || null,
+      contentCategorySource: contentCategorySource || null,
+      // Provide a short one-line description and optional source
+      descriptionShort,
+      descriptionSource,
     };
   }
-  let score = 30;
-  const tld = domain.split(".").pop();
-  if (suspiciousTlds.includes(tld)) score += 25;
-  if (suspiciousKeywords.some((w) => domain.includes(w))) score += 20;
+
+  const baseNote = buildAnalysisBlock(
+    "— NOT YET ANALYZED",
+    [
+      {
+        title: "DESCRIPTION",
+        rows: [["Summary", null]],
+      },
+      {
+        title: "DETECTION METRICS",
+        rows: [["VirusTotal", null]],
+      },
+      {
+        title: "REGISTRATION",
+        rows: [
+          ["Creation Date", null],
+          ["Last Updated", null],
+          ["Registrar", null],
+          ["Country", null],
+        ],
+      },
+      {
+        title: "CATEGORIZATION",
+        rows: [["Content Category", null]],
+      },
+    ],
+  ) + "\n\nNo information found for this domain.";
+
   return {
     vtVendors: "—",
-    talosReputation: "—",
-    note: "Nu a fost analizat încă",
-    score,
+    creationDate: "—",
+    registrar: "—",
+    country: "—",
+    note: baseNote,
+    score: 30,
     isDetected: false,
+    contentCategory: null,
+    contentCategorySource: null,
+    descriptionShort: null,
+    descriptionSource: null,
   };
 }
 
@@ -1035,56 +1544,182 @@ function getUrlDetails(rawUrl) {
   const host = (parsed && parsed.hostname) || "N/A";
   const path = (parsed && parsed.pathname) || "/";
   const query = (parsed && parsed.search) || "";
-  const isTrusted = isDomainTrusted(host);
-  const score = isTrusted
-    ? 15
-    : getUrlSuspicionScore(rawUrl, host, path, query);
+
+  const cached = apiCache[rawUrl];
+  if (cached && cached.vt && cached.vt.data && cached.vt.data.attributes) {
+    const a = cached.vt.data.attributes;
+    const stats = a.last_analysis_stats || {};
+    const mal = (stats.malicious || 0) + (stats.suspicious || 0);
+    const total = Object.values(stats).reduce((a2, b) => a2 + b, 0);
+    const verdict =
+      mal >= 5 ? "⚠ MALICIOUS" : mal >= 1 ? "⚡ SUSPICIOUS" : "✓ CLEAN";
+    const classification = verdict.startsWith("⚠") ? "malicious" : verdict.startsWith("⚡") ? "suspicious" : "clean";
+    const repRes = resolveReputation(cached);
+    const reputationWord =
+      repRes.value === "—" ? "neutral/clean" : repRes.value.toLowerCase();
+    const reputationSource = repRes.source ? ` according to ${repRes.source}` : "";
+    const prose = `This URL is classified as ${classification} based on multiple OSINT sources, with a ${reputationWord} web reputation${reputationSource}${mal ? ", possibly associated with phishing, scams, malware distribution, or abusive activity" : ""}.`;
+
+    // URLhaus (abuse.ch) threat intel for known-bad URLs.
+    const uh = cached.urlhaus || null;
+    const uhThreat = uh && uh.threat ? String(uh.threat) : null;
+    const uhStatus = uh && uh.url_status ? String(uh.url_status) : null;
+    const uhTags =
+      uh && Array.isArray(uh.tags) && uh.tags.length
+        ? uh.tags.slice(0, 6).join(", ")
+        : null;
+
+    // Structured block above prose for consistency
+    const note = buildAnalysisBlock(verdict, [
+      {
+        title: "DETECTION METRICS",
+        rows: [
+          ["VirusTotal", `${mal}/${total} vendors flagged this URL`],
+          [
+            "Web Reputation",
+            repRes.value === "—"
+              ? null
+              : `${repRes.value} (${repRes.source})`,
+          ],
+        ],
+      },
+      {
+        title: "THREAT INTEL",
+        rows: [
+          ["URLhaus Status", uhStatus],
+          ["Threat Type", uhThreat],
+          ["Tags", uhTags],
+        ],
+      },
+      {
+        title: "URL STRUCTURE",
+        rows: [
+          ["Host", host],
+          ["Path", path || "/"],
+          ["Query", query || null],
+        ],
+      },
+    ]) + "\n\n" + prose;
+    return {
+      domain: host,
+      path,
+      query: query || "—",
+      vtVendors: `${mal}/${total}`,
+      note,
+      score: Math.min(100, 30 + mal * 10),
+      isDetected: mal > 0,
+    };
+  }
+
+  const baseNote = buildAnalysisBlock(
+    "— NOT YET ANALYZED",
+    [
+      {
+        title: "DETECTION METRICS",
+        rows: [["VirusTotal", null]],
+      },
+      {
+        title: "URL STRUCTURE",
+        rows: [
+          ["Host", host],
+          ["Path", path || "/"],
+          ["Query", query || null],
+        ],
+      },
+    ],
+  ) + "\n\nNo information found for this URL.";
+
   return {
     domain: host,
     path,
     query: query || "—",
     vtVendors: "—",
-    talosReputation: "—",
-    note: isTrusted
-      ? "Domeniu de încredere"
-      : score >= 60
-        ? "URL potențial malitios - verifică sursele OSINT"
-        : "No verdict - URL-ul nu a fost raportat pe sursele OSINT",
-    score,
-    isDetected: !isTrusted && score >= 60,
+    note: baseNote,
+    score: 30,
+    isDetected: false,
   };
 }
 
 function getHashDetails(hash) {
   const types = { 32: "MD5", 40: "SHA1", 64: "SHA256", 128: "SHA512" };
-  const notes = {
-    32: "MD5 hash - verifică reputația pe VirusTotal",
-    40: "SHA1 hash - deprecated dar încă folosit pe VT",
-    64: "SHA256 hash - standard actual pentru file integrity",
-    128: "SHA512 hash - hash puternic pentru fișiere mari",
-  };
+  const hashType = types[hash.length] || "Unknown";
   const cached = apiCache[hash];
+
   if (cached && cached.vt && cached.vt.data && cached.vt.data.attributes) {
-    const stats = cached.vt.data.attributes.last_analysis_stats || {};
+    const a = cached.vt.data.attributes;
+    const stats = a.last_analysis_stats || {};
     const mal = (stats.malicious || 0) + (stats.suspicious || 0);
-    const total = Object.values(stats).reduce((a, b) => a + b, 0);
+    const total = Object.values(stats).reduce((acc, b) => acc + b, 0);
+    const verdict =
+      mal >= 5 ? "⚠ MALWARE" : mal >= 1 ? "⚡ SUSPICIOUS" : "✓ CLEAN";
+    const classification = verdict.startsWith("⚠") ? "malicious" : verdict.startsWith("⚡") ? "suspicious" : "clean";
+    const prose = `This file hash is classified as ${classification} based on detections from multiple OSINT and malware analysis platforms, potentially associated with malware families, trojans, ransomware, or suspicious executable behavior.`;
+
+    // Structured block above prose for consistency
+    const note = buildAnalysisBlock(verdict, [
+      {
+        title: "DETECTION METRICS",
+        rows: [["VirusTotal", `${mal}/${total} vendors flagged this file`]],
+      },
+      {
+        title: "FILE INFO",
+        rows: [
+          ["Hash Type", hashType],
+          ["File Type", a.type_description || null],
+          ["File Size", a.size ? `${(a.size / 1024).toFixed(1)} KB` : null],
+          ["File Name", a.meaningful_name || null],
+          ["First Seen", formatVtDate(a.first_submission_date)],
+          ["Last Seen", formatVtDate(a.last_submission_date)],
+        ],
+      },
+    ]) + "\n\n" + prose;
     return {
-      type: types[hash.length] || "Unknown",
-      note:
-        mal > 0
-          ? `⚠ ${mal}/${total} VT vendors semnalează malware`
-          : "✓ Curat pe VirusTotal",
+      type: hashType,
+      note,
       score: Math.min(100, mal * 10),
       isDetected: mal > 0,
+      // Expose common file fields for UI
+      fileName: a.meaningful_name || null,
+      fileType: a.type_description || null,
+      fileSize: a.size ? `${(a.size / 1024).toFixed(1)} KB` : null,
+      firstSeen: formatVtDate(a.first_submission_date) || null,
+      lastSeen: formatVtDate(a.last_submission_date) || null,
+      vtVendors: `${mal}/${total}`,
     };
   }
+
+  const baseNote = buildAnalysisBlock(
+    "— NOT YET ANALYZED",
+    [
+      {
+        title: "DETECTION METRICS",
+        rows: [["VirusTotal", null]],
+      },
+      {
+        title: "FILE INFO",
+        rows: [
+          ["Hash Type", hashType],
+          ["File Type", null],
+          ["File Size", null],
+          ["File Name", null],
+          ["First Seen", null],
+          ["Last Seen", null],
+        ],
+      },
+    ],
+  ) + "\n\nNo information found for this file hash.";
+
   return {
-    type: types[hash.length] || "Unknown",
-    note:
-      notes[hash.length] ||
-      "Format necunoscut - ar putea fi SSDEEP, CTH, etc. No verdict.",
-    score: types[hash.length] ? 50 : 35,
+    type: hashType,
+    note: baseNote,
+    score: hashType === "Unknown" ? 35 : 50,
     isDetected: false,
+    fileName: null,
+    fileType: null,
+    fileSize: null,
+    firstSeen: null,
+    lastSeen: null,
+    vtVendors: "—",
   };
 }
 
@@ -1095,22 +1730,7 @@ function parseUrl(rawUrl) {
     return null;
   }
 }
-function getUrlSuspicionScore(rawUrl, host, path, query) {
-  let score = 40;
-  if (host) {
-    const tld = host.split(".").pop();
-    if (suspiciousTlds.includes(tld)) score += 20;
-    if (suspiciousKeywords.some((w) => host.includes(w))) score += 15;
-  }
-  if (
-    suspiciousKeywords.some((w) =>
-      `${host}${path}${query}`.toLowerCase().includes(w),
-    )
-  )
-    score += 20;
-  if (path.length > 40) score += 10;
-  return Math.min(score, 100);
-}
+
 function isPrivateIp(ip) {
   const o = ip.split(".").map(Number);
   return (
@@ -1143,7 +1763,7 @@ async function vtFetch(path) {
   const res = await workerFetch(path, { "X-VT-Key": vt });
   if (res.status === 404) return null;
   if (res.status === 429)
-    throw new Error("VT rate limit — așteaptă și reîncearcă");
+    throw new Error("VT rate limit — wait and retry");
   if (res.status === 401) throw new Error("VT API key invalid");
   if (!res.ok) throw new Error(`VT HTTP ${res.status}`);
   return res.json();
@@ -1158,6 +1778,106 @@ async function abuseFetch(ip) {
   if (!res.ok) throw new Error(`AbuseIPDB HTTP ${res.status}`);
   return res.json();
 }
+
+// ── GreyNoise Community + Shodan InternetDB (free, no key) ─────
+// Both are no-auth public APIs that return useful enrichment for
+// any public IPv4. GreyNoise classifies whether an IP is "noise" on
+// the internet (benign scanner / known actor / unknown); Shodan
+// InternetDB returns the IP's tags + open ports + CPEs.
+async function greynoiseFetch(ip) {
+  try {
+    const res = await workerFetch(`/greynoise/${ip}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || typeof data !== "object") return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+async function shodanFetch(ip) {
+  try {
+    const res = await workerFetch(`/shodan/${ip}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || typeof data !== "object") return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+// ── Domain description (homepage meta + Wikipedia fallback) ────
+// Returns { title, description, source } or null.
+// ── Kaspersky OpenTip (free tier, key required) ────────────────
+// Returns the raw OpenTip response or null. type: ip|domain|url|hash.
+async function kasFetch(type, value) {
+  const { kas } = getKeys();
+  if (!kas) return null;
+  try {
+    const res = await workerFetch(`/kas/${type}/${encodeURIComponent(value)}`, {
+      "X-Kas-Key": kas,
+    });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function describeFetch(domain) {
+  try {
+    const res = await workerFetch(`/describe/${encodeURIComponent(domain)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || (!data.description && !data.title)) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+// ── URLhaus (abuse.ch, free, no key) ───────────────────────────
+// Returns threat type + status + tags for known-bad URLs.
+async function urlhausFetch(url) {
+  try {
+    const body = new URLSearchParams({ url }).toString();
+    const res = await fetch(`${WORKER}/uh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || data.query_status !== "ok") return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+// Convert VT's signed reputation integer (-100..+100) to a stable label.
+function mapVtReputation(score) {
+  if (typeof score !== "number") return null;
+  if (score >= 20) return "Good";
+  if (score <= -20) return "Bad";
+  if (score < 0) return "Poor";
+  return "Neutral";
+}
+
+// Reputation now comes only from VirusTotal's community reputation field.
+function resolveReputation(cached) {
+  if (!cached) return { value: "—", source: null };
+  const vtAttr =
+    cached.vt && cached.vt.data && cached.vt.data.attributes
+      ? cached.vt.data.attributes
+      : null;
+  const fromVt = mapVtReputation(vtAttr && vtAttr.reputation);
+  if (fromVt) return { value: fromVt, source: "VirusTotal" };
+  return { value: "—", source: null };
+}
+
 
 // ── Rate-limited queue ─────────────────────────────────────────
 const apiQueue = [];
@@ -1194,11 +1914,12 @@ function updateAnalysisBtnState() {
   stopAnalysisBtn.disabled = !analysisRunning;
   if (!hasKeys)
     analysisNote.textContent =
-      'Adaugă cheile API și apasă "Salvează cheile" pentru a activa analiza.';
+      'Add API keys and press "Save keys" to enable analysis.';
   else if (!hasIOCs)
-    analysisNote.textContent = "Încarcă fișiere pentru a activa analiza.";
+    analysisNote.textContent = "Upload files to enable analysis.";
   else
-    analysisNote.textContent = 'Apasă "Start Analysis" pentru a interoga APIs.';
+    analysisNote.textContent = 'Press "Start Analysis" to query APIs.';
+  updateReportBtnState();
 }
 
 // ── Start analysis ─────────────────────────────────────────────
@@ -1206,7 +1927,7 @@ async function startAnalysis() {
   if (analysisRunning) return;
   const { vt, abuse } = getKeys();
   if (!vt && !abuse) {
-    analysisNote.textContent = "Adaugă cel puțin o cheie API.";
+    analysisNote.textContent = "Add at least one API key.";
     return;
   }
   analysisAborted = false;
@@ -1215,19 +1936,14 @@ async function startAnalysis() {
   stopAnalysisBtn.disabled = false;
 
   const iocs = [
-    ...currentIps
-      .filter((v) => !apiCache[v])
-      .map((v) => ({ value: v, type: "ip" })),
-    ...currentDomains
-      .filter((v) => !isDomainTrusted(v) && !apiCache[v])
-      .map((v) => ({ value: v, type: "domain" })),
-    ...currentHashes
-      .filter((v) => !apiCache[v])
-      .map((v) => ({ value: v, type: "hash" })),
+    ...currentIps.map((v) => ({ value: v, type: "ip" })),
+    ...currentDomains.map((v) => ({ value: v, type: "domain" })),
+    ...currentUrls.map((v) => ({ value: v, type: "url" })),
+    ...currentHashes.map((v) => ({ value: v, type: "hash" })),
   ];
 
   if (!iocs.length) {
-    analysisNote.textContent = "Toate IOC-urile sunt deja analizate.";
+    analysisNote.textContent = "All IOCs are already analyzed.";
     finishAnalysis();
     return;
   }
@@ -1248,14 +1964,23 @@ async function startAnalysis() {
       if (analysisAborted) return;
       try {
         if (ioc.type === "ip") {
-          const [vtRes, abuseRes] = await Promise.allSettled([
+          const [vtRes, abuseRes, gnRes, shoRes] = await Promise.allSettled([
             vtFetch(`/vt/ip/${ioc.value}`),
             abuseFetch(ioc.value),
+            greynoiseFetch(ioc.value),
+            shodanFetch(ioc.value),
           ]);
           const vtData = vtRes.status === "fulfilled" ? vtRes.value : null;
           const abuseData =
             abuseRes.status === "fulfilled" ? abuseRes.value : null;
-          apiCache[ioc.value] = { vt: vtData, abuse: abuseData };
+          const gnData = gnRes.status === "fulfilled" ? gnRes.value : null;
+          const shoData = shoRes.status === "fulfilled" ? shoRes.value : null;
+          apiCache[ioc.value] = {
+            vt: vtData,
+            abuse: abuseData,
+            greynoise: gnData,
+            shodan: shoData,
+          };
           LOG.ip(ioc.value, vtData, abuseData);
           const mal =
             (vtData &&
@@ -1273,9 +1998,41 @@ async function startAnalysis() {
           else if (mal >= 1 || sc >= 25) summary.suspicious++;
           else summary.clean++;
         } else if (ioc.type === "domain") {
-          const vtData = await vtFetch(`/vt/domain/${ioc.value}`);
-          apiCache[ioc.value] = { vt: vtData };
+          const [vtRes, descRes, kasRes] = await Promise.allSettled([
+            vtFetch(`/vt/domain/${ioc.value}`),
+            describeFetch(ioc.value),
+            kasFetch("domain", ioc.value),
+          ]);
+          const vtData = vtRes.status === "fulfilled" ? vtRes.value : null;
+          const descData =
+            descRes.status === "fulfilled" ? descRes.value : null;
+          const kasData = kasRes.status === "fulfilled" ? kasRes.value : null;
+          apiCache[ioc.value] = {
+            vt: vtData,
+            describe: descData,
+            kas: kasData,
+          };
           LOG.domain(ioc.value, vtData);
+          const mal =
+            (vtData &&
+              vtData.data &&
+              vtData.data.attributes &&
+              vtData.data.attributes.last_analysis_stats &&
+              vtData.data.attributes.last_analysis_stats.malicious) ||
+            0;
+          if (mal >= 5) summary.malicious++;
+          else if (mal >= 1) summary.suspicious++;
+          else summary.clean++;
+        } else if (ioc.type === "url") {
+          // VT URL covers the URL itself; URLhaus (abuse.ch) adds
+          // threat-type / tags / status for known-bad URLs.
+          const [vtRes, uhRes] = await Promise.allSettled([
+            vtFetch(`/vt/url/${encodeURIComponent(ioc.value)}`),
+            urlhausFetch(ioc.value),
+          ]);
+          const vtData = vtRes.status === "fulfilled" ? vtRes.value : null;
+          const uhData = uhRes.status === "fulfilled" ? uhRes.value : null;
+          apiCache[ioc.value] = { vt: vtData, urlhaus: uhData };
           const mal =
             (vtData &&
               vtData.data &&
@@ -1307,7 +2064,7 @@ async function startAnalysis() {
         summary.errors++;
       }
       done++;
-      analysisNote.textContent = `Se analizează ${done} / ${iocs.length} IOC-uri…`;
+      analysisNote.textContent = `Analyzing ${done} / ${iocs.length} IOCs…`;
       renderAll(currentIps, currentUrls, currentDomains, currentHashes);
     });
   }
@@ -1318,7 +2075,7 @@ async function startAnalysis() {
 function stopAnalysis() {
   analysisAborted = true;
   apiQueue.length = 0;
-  analysisNote.textContent = "Analiză oprită de utilizator.";
+  analysisNote.textContent = "Analysis stopped by user.";
   finishAnalysis(false);
 }
 
@@ -1326,7 +2083,7 @@ function finishAnalysis(completed = true) {
   analysisRunning = false;
   startAnalysisBtn.disabled = false;
   stopAnalysisBtn.disabled = true;
-  if (completed) analysisNote.textContent = "✓ Analiză completă.";
+  if (completed) analysisNote.textContent = "✓ Analysis complete.";
 }
 
 // ── Card builders (UI identical to original) ───────────────────
@@ -1338,11 +2095,12 @@ function createIpTable(items) {
         <div class="result-item-left">
             <div><div class="result-label">IP Address</div><div class="result-value">${item.ip}</div></div>
             <div><div class="result-label">ISP</div><div class="result-value">${item.isp}</div></div>
+            <div><div class="result-label">Country</div><div class="result-value">${item.country}</div></div>
             <div><div class="result-label">Category</div><div class="result-value">${item.category}</div></div>
-            <div><div class="result-label">VirusTotal Vendors</div><div class="result-value">${item.vtVendors}${item.vtVendors !== "—" ? " vendors semnalează" : ""}</div></div>
+            <div><div class="result-label">VirusTotal Vendors</div><div class="result-value">${item.vtVendors}${item.vtVendors !== "—" ? " vendors flagged" : ""}</div></div>
             <div><div class="result-label">AbuseIPDB Confidence</div><div class="result-value">${item.abuseConfidence}</div></div>
-            <div><div class="result-label">Talos Reputation</div><div class="result-value">${item.talosReputation}</div></div>
-            <div><div class="result-label">Analysis</div><div class="result-value">${item.note}</div></div>
+            <div><div class="result-label">Analysis</div><div class="analysis-block">${item.note}</div></div>
+            ${apiCache[item.ip] && apiCache[item.ip].err ? `<div><div class="result-label">Fetch Error</div><div class="result-value">${apiCache[item.ip].err}</div></div>` : ""}
             <div><div class="result-label">Score</div><div>${createTag(item.score, !!apiCache[item.ip])}</div></div>
         </div>
         <div class="result-item-right">
@@ -1360,14 +2118,14 @@ function createUrlTable(items) {
       (item) => `
     <div class="result-item ${item.isDetected ? "detected" : ""}">
         <div class="result-item-left">
-            <div><div class="result-label">URL</div><div class="result-value"><a href="${item.url}" target="_blank" rel="noreferrer">${item.url}</a></div></div>
+            <div><div class="result-label">URL</div><div class="result-value">${sanitizeDisplayUrl(item.url)}</div></div>
             <div><div class="result-label">Domain</div><div class="result-value">${item.domain}</div></div>
             <div><div class="result-label">Path</div><div class="result-value">${item.path || "/"}</div></div>
             <div><div class="result-label">Query</div><div class="result-value">${item.query || "—"}</div></div>
-            <div><div class="result-label">VirusTotal Vendors</div><div class="result-value">—</div></div>
-            <div><div class="result-label">Talos Reputation</div><div class="result-value">—</div></div>
-            <div><div class="result-label">Analysis</div><div class="result-value">${item.note}</div></div>
-            <div><div class="result-label">Score</div><div>${createTag(item.score, false)}</div></div>
+            <div><div class="result-label">VirusTotal Vendors</div><div class="result-value">${item.vtVendors}${item.vtVendors !== "—" ? " vendors flagged" : ""}</div></div>
+            <div><div class="result-label">Analysis</div><div class="analysis-block">${item.note}</div></div>
+            ${apiCache[item.url] && apiCache[item.url].err ? `<div><div class="result-label">Fetch Error</div><div class="result-value">${apiCache[item.url].err}</div></div>` : ""}
+            <div><div class="result-label">Score</div><div>${createTag(item.score, !!apiCache[item.url])}</div></div>
         </div>
         <div class="result-item-right">
             <div class="result-label">OSINT Sources</div>
@@ -1385,9 +2143,13 @@ function createDomainTable(items) {
     <div class="result-item ${item.isDetected ? "detected" : ""}">
         <div class="result-item-left">
             <div><div class="result-label">Domain</div><div class="result-value">${item.domain}</div></div>
-            <div><div class="result-label">VirusTotal Vendors</div><div class="result-value">${item.vtVendors}${item.vtVendors !== "—" ? " vendors semnalează" : ""}</div></div>
-            <div><div class="result-label">Talos Reputation</div><div class="result-value">${item.talosReputation}</div></div>
-            <div><div class="result-label">Analysis</div><div class="result-value">${item.note}</div></div>
+            ${item.contentCategory ? `<div><div class="result-label">Category</div><div class="result-value">${item.contentCategory}${item.contentCategorySource ? ` (${item.contentCategorySource})` : ``}</div></div>` : ""}
+            ${item.descriptionShort ? `<div><div class="result-label">Summary</div><div class="result-value">${item.descriptionShort}</div></div>` : ""}
+            <div><div class="result-label">VirusTotal Vendors</div><div class="result-value">${item.vtVendors}${item.vtVendors !== "—" ? " vendors flagged" : ""}</div></div>
+            <div><div class="result-label">Creation Date</div><div class="result-value">${item.creationDate || "—"}</div></div>
+            <div><div class="result-label">Country</div><div class="result-value">${item.country || "—"}</div></div>
+            <div><div class="result-label">Analysis</div><div class="analysis-block">${item.note}</div></div>
+            ${apiCache[item.domain] && apiCache[item.domain].err ? `<div><div class="result-label">Fetch Error</div><div class="result-value">${apiCache[item.domain].err}</div></div>` : ""}
             <div><div class="result-label">Score</div><div>${createTag(item.score, !!apiCache[item.domain])}</div></div>
         </div>
         <div class="result-item-right">
@@ -1406,8 +2168,14 @@ function createHashTable(items) {
     <div class="result-item ${item.isDetected ? "detected" : ""}">
         <div class="result-item-left">
             <div><div class="result-label">Hash</div><div class="result-value">${item.hash}</div></div>
-            <div><div class="result-label">Type</div><div class="result-value">${item.type}</div></div>
-            <div><div class="result-label">Analysis</div><div class="result-value">${item.note}</div></div>
+            ${item.fileName ? `<div><div class="result-label">File Name</div><div class="result-value">${item.fileName}</div></div>` : ""}
+            <div><div class="result-label">Type</div><div class="result-value">${item.type}${item.fileType ? ` — ${item.fileType}` : ""}</div></div>
+            ${item.fileSize ? `<div><div class="result-label">Size</div><div class="result-value">${item.fileSize}</div></div>` : ""}
+            ${item.firstSeen ? `<div><div class="result-label">First Seen</div><div class="result-value">${item.firstSeen}</div></div>` : ""}
+            ${item.lastSeen ? `<div><div class="result-label">Last Seen</div><div class="result-value">${item.lastSeen}</div></div>` : ""}
+            <div><div class="result-label">VirusTotal Vendors</div><div class="result-value">${item.vtVendors || "—"}${item.vtVendors && item.vtVendors !== "—" ? " vendors flagged" : ""}</div></div>
+            ${apiCache[item.hash] && apiCache[item.hash].err ? `<div><div class="result-label">Fetch Error</div><div class="result-value">${apiCache[item.hash].err}</div></div>` : ""}
+            <div><div class="result-label">Analysis</div><div class="analysis-block">${item.note}</div></div>
             <div><div class="result-label">Score</div><div>${createTag(item.score, !!apiCache[item.hash])}</div></div>
         </div>
         <div class="result-item-right">
@@ -1420,7 +2188,7 @@ function createHashTable(items) {
 }
 
 function createTag(score, analyzed = false) {
-  if (!analyzed) return `<span class="tag tag-pending">NEANALIZ</span>`;
+  if (!analyzed) return `<span class="tag tag-pending">UNANALYZED</span>`;
   const label = score >= 70 ? "High" : score >= 45 ? "Medium" : "Low";
   const cls =
     score >= 70
@@ -1440,6 +2208,21 @@ function createOsintButtons(value, category) {
     .join("");
 }
 
+function sanitizeDisplayUrl(u) {
+  if (!u) return "—";
+  try {
+    const parsed = new URL(u);
+    const hostPath = `${parsed.hostname}${parsed.pathname}${parsed.search}`;
+    let prefix = "hxxp[:]//";
+    if (parsed.protocol === "https:") prefix = "hxxps[:]//";
+    else if (parsed.protocol === "http:") prefix = "hxxp[:]//";
+    else prefix = parsed.protocol.replace(":", "[:]//");
+    return prefix + hostPath.replace(/\./g, "[.]");
+  } catch (e) {
+    return String(u).replace(/\./g, "[.]").replace(/^https?:\/\//, "hxxp://");
+  }
+}
+
 document.addEventListener("click", (e) => {
   const btn = e.target.closest(".osint-open-all");
   if (!btn) return;
@@ -1449,6 +2232,231 @@ document.addEventListener("click", (e) => {
     window.open(src.url(val), "_blank"),
   );
 });
+
+// ── Reports ────────────────────────────────────────────────────
+function updateReportBtnState() {
+  const total =
+    currentIps.length +
+    currentUrls.length +
+    currentDomains.length +
+    currentHashes.length;
+  const hasIOCs = total > 0;
+  reportMaliciousBtn.disabled = !hasIOCs;
+  reportFullBtn.disabled = !hasIOCs;
+  if (!hasIOCs) {
+    reportNote.textContent = "Load IOCs to enable the report buttons.";
+  } else {
+    reportNote.textContent = `${total} IOC(s) ready for export.`;
+  }
+}
+
+function isMalicious(item) {
+  return item && (item.score >= 70 || item.isDetected === true);
+}
+
+function pad(s, n) {
+  s = String(s);
+  return s.length >= n ? s : s + " ".repeat(n - s.length);
+}
+
+// Pull just the first line ("THREAT LEVEL: ...") out of a multi-line note
+// for use in the compact malicious-only report rows.
+function shortVerdict(note) {
+  if (!note) return "";
+  return String(note).split("\n")[0];
+}
+
+// Indent every line of the structured analysis block under "Note:".
+function indentNote(note, indent = "    ") {
+  if (!note) return "";
+  return String(note)
+    .split("\n")
+    .map((l) => (l ? indent + l : l))
+    .join("\n");
+}
+
+function buildReport(type) {
+  const now = new Date();
+  const iso = now.toISOString();
+  const ips = currentIps
+    .map((ip) => ({ ip, ...getIpDetails(ip) }))
+    .sort((a, b) => b.score - a.score);
+  const urls = currentUrls
+    .map((url) => ({ url, ...getUrlDetails(url) }))
+    .sort((a, b) => b.score - a.score);
+  const domains = currentDomains
+    .map((domain) => ({ domain, ...getDomainDetails(domain) }))
+    .sort((a, b) => b.score - a.score);
+  const hashes = currentHashes
+    .map((hash) => ({ hash, ...getHashDetails(hash) }))
+    .sort((a, b) => b.score - a.score);
+
+  const filterFn = type === "malicious" ? isMalicious : () => true;
+  const ipsList = ips.filter(filterFn);
+  const urlsList = urls.filter(filterFn);
+  const domainsList = domains.filter(filterFn);
+  const hashesList = hashes.filter(filterFn);
+
+  const lines = [];
+  lines.push("=".repeat(70));
+  lines.push(
+    `  THREAT EXTRACTION REPORT — ${
+      type === "malicious" ? "MALICIOUS ONLY" : "FULL DETAILS"
+    }`,
+  );
+  lines.push(`  Generated: ${iso}`);
+  lines.push("=".repeat(70));
+  lines.push("");
+  lines.push(
+    `Summary: ${ipsList.length} IP(s) · ${urlsList.length} URL(s) · ${domainsList.length} domain(s) · ${hashesList.length} hash(es)`,
+  );
+  lines.push("");
+
+  if (
+    type === "malicious" &&
+    !ipsList.length &&
+    !urlsList.length &&
+    !domainsList.length &&
+    !hashesList.length
+  ) {
+    lines.push("No malicious items found.");
+    return lines.join("\n");
+  }
+
+  // ── IPs ──
+  if (ipsList.length) {
+    lines.push("─".repeat(70));
+    lines.push("  IP ADDRESSES");
+    lines.push("─".repeat(70));
+    if (type === "malicious") {
+      ipsList.forEach((it) => {
+        lines.push(
+          `${pad(it.ip, 18)}  score=${pad(it.score, 4)}  VT=${pad(it.vtVendors, 8)}  Abuse=${pad(it.abuseConfidence, 6)}  ${shortVerdict(it.note)}`,
+        );
+      });
+    } else {
+      ipsList.forEach((it) => {
+        lines.push("");
+        lines.push(`IP: ${it.ip}`);
+        lines.push(`  Category:           ${it.category}`);
+        lines.push(`  ISP:                ${it.isp}`);
+        lines.push(`  Country:            ${it.country}`);
+        lines.push(`  VirusTotal Vendors: ${it.vtVendors}`);
+        lines.push(`  AbuseIPDB:          ${it.abuseConfidence}`);
+        lines.push(`  Score:              ${it.score}`);
+        lines.push(`  Detected:           ${it.isDetected ? "yes" : "no"}`);
+        lines.push(`  Analysis:`);
+        lines.push(indentNote(it.note));
+      });
+    }
+    lines.push("");
+  }
+
+  // ── URLs ──
+  if (urlsList.length) {
+    lines.push("─".repeat(70));
+    lines.push("  URLS");
+    lines.push("─".repeat(70));
+    if (type === "malicious") {
+      urlsList.forEach((it) => {
+        lines.push(`${it.url}  score=${it.score}  ${shortVerdict(it.note)}`);
+      });
+    } else {
+      urlsList.forEach((it) => {
+        lines.push("");
+        lines.push(`URL: ${it.url}`);
+        lines.push(`  Domain:             ${it.domain}`);
+        lines.push(`  Path:               ${it.path || "/"}`);
+        lines.push(`  Query:              ${it.query || "—"}`);
+        lines.push(`  VirusTotal Vendors: ${it.vtVendors}`);
+        lines.push(`  Score:              ${it.score}`);
+        lines.push(`  Detected:           ${it.isDetected ? "yes" : "no"}`);
+        lines.push(`  Analysis:`);
+        lines.push(indentNote(it.note));
+      });
+    }
+    lines.push("");
+  }
+
+  // ── Domains ──
+  if (domainsList.length) {
+    lines.push("─".repeat(70));
+    lines.push("  DOMAINS");
+    lines.push("─".repeat(70));
+    if (type === "malicious") {
+      domainsList.forEach((it) => {
+        lines.push(
+          `${pad(it.domain, 32)}  score=${pad(it.score, 4)}  VT=${pad(it.vtVendors, 6)}  ${shortVerdict(it.note)}`,
+        );
+      });
+    } else {
+      domainsList.forEach((it) => {
+        lines.push("");
+        lines.push(`Domain: ${it.domain}`);
+        lines.push(`  VirusTotal Vendors: ${it.vtVendors}`);
+        lines.push(`  Creation Date:      ${it.creationDate || "—"}`);
+        lines.push(`  Registrar:          ${it.registrar || "—"}`);
+        lines.push(`  Country:            ${it.country || "—"}`);
+        lines.push(`  Score:              ${it.score}`);
+        lines.push(`  Detected:           ${it.isDetected ? "yes" : "no"}`);
+        lines.push(`  Analysis:`);
+        lines.push(indentNote(it.note));
+      });
+    }
+    lines.push("");
+  }
+
+  // ── Hashes ──
+  if (hashesList.length) {
+    lines.push("─".repeat(70));
+    lines.push("  FILE HASHES");
+    lines.push("─".repeat(70));
+    if (type === "malicious") {
+      hashesList.forEach((it) => {
+        lines.push(
+          `${pad(it.type, 8)}  ${it.hash}  score=${it.score}  ${shortVerdict(it.note)}`,
+        );
+      });
+    } else {
+      hashesList.forEach((it) => {
+        lines.push("");
+        lines.push(`Hash: ${it.hash}`);
+        lines.push(`  Type:               ${it.type}`);
+        lines.push(`  Score:              ${it.score}`);
+        lines.push(`  Detected:           ${it.isDetected ? "yes" : "no"}`);
+        lines.push(`  Analysis:`);
+        lines.push(indentNote(it.note));
+      });
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+function downloadReport(type) {
+  const total =
+    currentIps.length +
+    currentUrls.length +
+    currentDomains.length +
+    currentHashes.length;
+  if (!total) {
+    reportNote.textContent = "No IOCs to export.";
+    return;
+  }
+  const text = buildReport(type);
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  a.href = blobUrl;
+  a.download = `threat-report-${type}-${stamp}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  reportNote.textContent = `✓ Downloaded ${type} report.`;
+}
 
 // ── Reset ──────────────────────────────────────────────────────
 function resetDashboard() {
@@ -1468,7 +2476,7 @@ function resetDashboard() {
     urlContainer.innerHTML =
     domainContainer.innerHTML =
     hashContainer.innerHTML =
-      "<p>Nu s-au încărcat fișiere.</p>";
+      "<p>No files loaded.</p>";
   currentIps = [];
   currentUrls = [];
   currentDomains = [];
